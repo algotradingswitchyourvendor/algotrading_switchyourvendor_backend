@@ -1,0 +1,68 @@
+[
+    {
+        "id": "high_volume",
+        "name": "High Volume",
+        "description": "Stocks with unusually high trading volume",
+        "conditions": [
+            {"column": "Volume", "operator": ">", "value": 5000000, "logical": "AND"}
+        ]
+    },
+    {
+        "id": "strong_gainers",
+        "name": "Strong Gainers",
+        "description": "Stocks gaining more than 3% today",
+        "conditions": [
+            {"column": "day_change_pct", "operator": ">", "value": 3, "logical": "AND"}
+        ]
+    },
+    {
+        "id": "strong_losers",
+        "name": "Strong Losers",
+        "description": "Stocks losing more than 3% today",
+        "conditions": [
+            {"column": "day_change_pct", "operator": "<", "value": -3, "logical": "AND"}
+        ]
+    },
+    {
+        "id": "price_above_average",
+        "name": "Price Above Average",
+        "description": "Stocks where current price exceeds the day's average price",
+        "conditions": [
+            {"column": "Last Price", "operator": ">", "value": 0, "logical": "AND"}
+        ]
+    },
+    {
+        "id": "upper_circuit",
+        "name": "Near Upper Circuit",
+        "description": "Stocks trading near their upper circuit limit",
+        "conditions": [
+            {"column": "day_change_pct", "operator": ">", "value": 5, "logical": "AND"},
+            {"column": "Volume", "operator": ">", "value": 100000, "logical": "AND"}
+        ]
+    },
+    {
+        "id": "buyer_dominated",
+        "name": "Buyer Dominated",
+        "description": "Stocks where buy quantity significantly exceeds sell quantity",
+        "conditions": [
+            {"column": "Total Buy Quantity", "operator": ">", "value": 500000, "logical": "AND"}
+        ]
+    },
+    {
+        "id": "seller_dominated",
+        "name": "Seller Dominated",
+        "description": "Stocks where sell quantity significantly exceeds buy quantity",
+        "conditions": [
+            {"column": "Total Sell Quantity", "operator": ">", "value": 500000, "logical": "AND"}
+        ]
+    },
+    {
+        "id": "bullish_momentum",
+        "name": "Bullish Momentum",
+        "description": "Stocks with positive price change and high volume",
+        "conditions": [
+            {"column": "day_change_pct", "operator": ">", "value": 1, "logical": "AND"},
+            {"column": "Volume", "operator": ">", "value": 1000000, "logical": "AND"}
+        ]
+    }
+]
