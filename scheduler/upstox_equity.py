@@ -117,7 +117,7 @@ class UpstoxScheduler:
         try:
             options = Options()
             options.add_argument("--no-sandbox")
-            options.add_argument("--headless")
+            # options.add_argument("--headless")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--remote-debugging-port=9222")
 
@@ -132,37 +132,35 @@ class UpstoxScheduler:
 
             driver.get(url)
 
-            WebDriverWait(driver, 30).until(
-                lambda d: d.execute_script("return document.readyState") == "complete"
-            )
+            wait = WebDriverWait(driver, 30)
 
-            # Enter mobile number
-            username_input = driver.find_element(By.XPATH, '//*[@id="mobileNum"]')
+            # Wait for React to render the mobile number input
+            username_input = wait.until(EC.visibility_of_element_located((By.ID, "mobileNum")))
             username_input.clear()
             username_input.send_keys(self.settings.UPSTOX_CLIENT_ID)
 
-            driver.find_element(By.XPATH, '//*[@id="getOtp"]').click()
+            wait.until(EC.element_to_be_clickable((By.ID, "getOtp"))).click()
 
+            # Wait for OTP input to become visible
+            password_input = wait.until(EC.visibility_of_element_located((By.ID, "otpNum")))
+            
             # Enter TOTP
             totp = pyotp.TOTP(self.settings.UPSTOX_TOTP_SECRET).now()
-            time.sleep(5)
-
-            password_input = driver.find_element(By.XPATH, '//*[@id="otpNum"]')
             password_input.clear()
             password_input.send_keys(totp)
 
-            driver.find_element(By.XPATH, '//*[@id="continueBtn"]').click()
-            time.sleep(5)
+            wait.until(EC.element_to_be_clickable((By.ID, "continueBtn"))).click()
 
-            # Enter PIN
-            pin_input = driver.find_element(By.XPATH, '//*[@id="pinCode"]')
+            # Wait for PIN input to become visible
+            pin_input = wait.until(EC.visibility_of_element_located((By.ID, "pinCode")))
             pin_input.clear()
             pin_input.send_keys(self.settings.UPSTOX_CLIENT_PIN)
 
             original_url = driver.current_url
-            driver.find_element(By.XPATH, '//*[@id="pinContinueBtn"]').click()
+            wait.until(EC.element_to_be_clickable((By.ID, "pinContinueBtn"))).click()
 
-            WebDriverWait(driver, 30).until(EC.url_changes(original_url))
+            # Wait until the URL changes from the login page
+            wait.until(EC.url_changes(original_url))
 
             redirected_url = driver.current_url
             code = redirected_url.split("?code=")[1]
