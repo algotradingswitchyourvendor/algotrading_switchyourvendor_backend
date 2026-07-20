@@ -1,0 +1,74 @@
+{
+    "Net Change": {
+        "display_name": "Day Change",
+        "unit": "₹",
+        "group": "Performance",
+        "description": "Absolute price change from previous close"
+    },
+    "day_change_pct": {
+        "display_name": "Day Change %",
+        "unit": "%",
+        "group": "Performance",
+        "description": "Percentage price change from previous close"
+    },
+    "Last Price": {
+        "display_name": "LTP",
+        "unit": "₹",
+        "description": "Last traded price"
+    },
+    "Average Price": {
+        "display_name": "Avg Price",
+        "unit": "₹",
+        "description": "Volume-weighted average price for the day"
+    },
+    "Total Buy Quantity": {
+        "display_name": "Buy Qty",
+        "description": "Total pending buy order quantity"
+    },
+    "Total Sell Quantity": {
+        "display_name": "Sell Qty",
+        "description": "Total pending sell order quantity"
+    },
+    "Lower Circuit Limit": {
+        "display_name": "Lower Circuit",
+        "unit": "₹",
+        "description": "Lower circuit price limit for the day"
+    },
+    "Upper Circuit Limit": {
+        "display_name": "Upper Circuit",
+        "unit": "₹",
+        "description": "Upper circuit price limit for the day"
+    },
+    "Open Interest": {
+        "display_name": "OI",
+        "description": "Open interest (derivatives only)"
+    },
+    "OI Day High": {
+        "display_name": "OI High",
+        "description": "Day's highest open interest"
+    },
+    "OI Day Low": {
+        "display_name": "OI Low",
+        "description": "Day's lowest open interest"
+    },
+    "trading_symbol": {
+        "display_name": "Symbol",
+        "description": "Trading symbol (e.g., INFY, SBIN)"
+    },
+    "Instrument": {
+        "display_name": "Instrument",
+        "description": "Full instrument key (e.g., NSE_EQ:INFY)"
+    },
+    "exchange": {
+        "display_name": "Exchange",
+        "description": "Stock exchange (NSE or BSE)"
+    },
+    "Fetch Timestamp": {
+        "display_name": "Last Updated",
+        "description": "When this data was last fetched from Upstox"
+    },
+    "Last Trade Time": {
+        "display_name": "Last Trade",
+        "description": "Time of the last trade for this instrument"
+    }
+}
