@@ -272,13 +272,9 @@ class UpstoxScheduler:
                 "Authorization": f"Bearer {self.access_token}",
             }
 
-            logger.info(f"DIAGNOSTIC: fetch_fno_data: Request URL={url}")
-
             response = requests.get(url, headers=headers, timeout=30)
-            logger.info(f"DIAGNOSTIC: fetch_fno_data: HTTP status code={response.status_code}")
             response.raise_for_status()
             data = response.json().get("data", {})
-            logger.info(f"DIAGNOSTIC: fetch_fno_data: Number of instruments returned={len(data)}")
 
             rows = []
             now = datetime.now(IST)
@@ -316,7 +312,6 @@ class UpstoxScheduler:
                 except Exception:
                     pass
 
-            logger.info(f"DIAGNOSTIC: fetch_fno_data: Number of rows created={len(rows)}")
             return pd.DataFrame(rows)
 
         except Exception as e:
@@ -327,27 +322,21 @@ class UpstoxScheduler:
         all_data = []
         chunk_size = self.settings.FETCH_CHUNK_SIZE
         total_tickers = len(self.ticker_list)
-        num_chunks = (total_tickers + chunk_size - 1) // chunk_size if chunk_size > 0 else 0
-
-        logger.info(f"DIAGNOSTIC: fetch_all_fno_data: Total ticker count = {total_tickers}, FETCH_CHUNK_SIZE = {chunk_size}, Number of chunks = {num_chunks}")
-
-        running_total_rows = 0
-        chunk_number = 1
 
         for i in range(0, total_tickers, chunk_size):
             chunk = self.ticker_list[i : i + chunk_size]
-            logger.info(f"DIAGNOSTIC: fetch_all_fno_data: Chunk number ({chunk_number}/{num_chunks}), Symbols in chunk: {chunk}")
+            end_idx = min(i + chunk_size, total_tickers)
+            logger.info(f"Fetching tickers {i + 1} to {end_idx}...")
             
             df = self.fetch_fno_data(chunk)
-            rows_returned = len(df) if not df.empty else 0
-            running_total_rows += rows_returned
-            logger.info(f"DIAGNOSTIC: fetch_all_fno_data: Rows returned = {rows_returned}, Running total rows = {running_total_rows}")
 
             if not df.empty:
                 all_data.append(df)
-            chunk_number += 1
 
-        return pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
+        final_df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
+        if not final_df.empty:
+            logger.info(f"Fetched data:\n{final_df.shape[0]} rows × {final_df.shape[1]} cols")
+        return final_df
 
     # ── Processing & Enrichment ─────────────────────────────────────────
 
@@ -653,34 +642,69 @@ class UpstoxScheduler:
             return
 
         try:
+            import time
+            total_start = time.time()
+            
+            logger.info("Starting data fetch cycle...")
+            
             now = datetime.now(IST)
             current_hour, current_minute = now.hour, now.minute
             
-            logger.info(f"Starting 1-minute fetch for {current_hour}:{current_minute:02d}...")
+            t0 = time.time()
             hist_time_dict = self.load_hist_cache(current_hour, current_minute)
+            t_hist = time.time() - t0
             
+            t0 = time.time()
             raw_df = self.fetch_all_fno_data()
-            logger.info(f"DIAGNOSTIC: _fetch_and_publish: raw_df.shape = {raw_df.shape}")
+            t_fetch = time.time() - t0
+            
             if raw_df.empty:
                 return
 
+            t0 = time.time()
             master_df = self.process_data(raw_df, hist_time_dict)
-            logger.info(f"DIAGNOSTIC: _fetch_and_publish: master_df.shape = {master_df.shape}")
+            t_process = time.time() - t0
+            
             if master_df.empty:
                 return
 
+            t0 = time.time()
             # Append to single daily Parquet
             self.upload_to_s3(master_df)
+            t_s3 = time.time() - t0
 
             # Update cache/dashboard immediately
+            t_cache = 0.0
+            t_cb = 0.0
             for callback in self._on_data_callbacks:
                 try:
-                    callback(master_df)
+                    res = callback(master_df)
+                    if isinstance(res, tuple) and len(res) == 2:
+                        t_cache += res[0]
+                        t_cb += res[1]
                 except Exception as e:
                     logger.error(f"Callback failed: {e}")
 
             # Prefetch for next minute
+            t0 = time.time()
             self.prefetch_next_minute(current_hour, current_minute)
+            t_prefetch = time.time() - t0
+            
+            total_end = time.time()
+            total_cycle = total_end - total_start
+            
+            summary = (
+                f"\n{'Loading History Cache ':.<31} {t_hist:.2f} sec\n"
+                f"{'Fetching Market Data ':.<31} {t_fetch:.2f} sec\n"
+                f"{'Processing Data ':.<31} {t_process:.2f} sec\n"
+                f"{'Uploading to S3 ':.<31} {t_s3:.2f} sec\n"
+                f"{'Updating LiveCache ':.<31} {t_cache:.2f} sec\n"
+                f"{'Running Callbacks ':.<31} {t_cb:.2f} sec\n"
+                f"{'Prefetch Next Minute ':.<31} {t_prefetch:.2f} sec\n\n"
+                f"{'TOTAL FETCH CYCLE ':.<31} {total_cycle:.2f} sec\n"
+            )
+            logger.info(summary)
+            
             logger.info("Fetch cycle complete")
             
         except Exception as e:

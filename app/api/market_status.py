@@ -9,7 +9,6 @@ from fastapi import APIRouter, Request
 
 from app.config.holidays import get_market_status_detail, get_market_status
 from app.schemas.response import success_response
-from app.services.index_service import get_index_data
 
 router = APIRouter()
 
@@ -26,28 +25,4 @@ async def market_status():
     return success_response(
         data=detail,
         market_status=detail["status"],
-    )
-
-
-@router.get("/indices")
-async def indices(request: Request):
-    """
-    Return current market index values.
-
-    Fetches NIFTY 50, SENSEX, BANK NIFTY, MIDCAP, FINNIFTY, INDIA VIX
-    from Upstox API. Results are cached for 60 seconds.
-
-    These are independent of the main equity DataFrame.
-    """
-    # Get access token from scheduler if available
-    access_token = None
-    scheduler = request.app.state.scheduler
-    if scheduler:
-        access_token = scheduler.access_token
-
-    data = get_index_data(access_token=access_token)
-
-    return success_response(
-        data=data,
-        market_status=get_market_status(),
     )
