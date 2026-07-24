@@ -32,11 +32,14 @@ class DownloadManager:
         Performs a lightweight HEAD request to get ETag and size.
         Returns (is_found, metadata).
         """
+        start_time = time.perf_counter()
         try:
             head = self.s3_client.head_object(
                 Bucket=self.settings.S3_BUCKET_NAME,
                 Key=s3_key
             )
+            elapsed = (time.perf_counter() - start_time) * 1000
+            logger.info(f"HEAD Object ({s3_key}): {elapsed:.2f} ms")
             return True, {
                 "etag": head.get("ETag", "").strip('"'),
                 "last_modified": str(head.get("LastModified")),
@@ -57,20 +60,31 @@ class DownloadManager:
         Returns (success_bool, duration_sec).
         """
         tmp_path = f"{dest_path}.tmp"
-        start_time = time.time()
+        start_time = time.perf_counter()
 
         try:
+            get_start = time.perf_counter()
             response = self.s3_client.get_object(
                 Bucket=self.settings.S3_BUCKET_NAME,
                 Key=s3_key
             )
+            get_elapsed = (time.perf_counter() - get_start) * 1000
+            logger.info(f"GET Object ({s3_key}): {get_elapsed:.2f} ms")
 
+            download_start = time.perf_counter()
             with open(tmp_path, "wb") as f:
                 for chunk in response["Body"].iter_chunks(chunk_size=self.settings.S3_CHUNK_SIZE):
                     f.write(chunk)
+            download_elapsed = (time.perf_counter() - download_start) * 1000
+            logger.info(f"Download ({s3_key}): {download_elapsed:.2f} ms")
 
             # Verification
-            if not self.validation.verify_cache_integrity(tmp_path):
+            val_start = time.perf_counter()
+            is_valid = self.validation.verify_cache_integrity(tmp_path)
+            val_elapsed = (time.perf_counter() - val_start) * 1000
+            logger.info(f"Validation ({s3_key}): {val_elapsed:.2f} ms")
+
+            if not is_valid:
                 logger.error(f"Download corrupted for {s3_key}. Discarding.")
                 if os.path.exists(tmp_path):
                     os.remove(tmp_path)
@@ -78,7 +92,7 @@ class DownloadManager:
 
             # Atomic Rename (POSIX safe, avoids partial reads)
             os.replace(tmp_path, dest_path)
-            duration = time.time() - start_time
+            duration = time.perf_counter() - start_time
             return True, duration
 
         except Exception as e:

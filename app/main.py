@@ -69,7 +69,7 @@ async def lifespan(app: FastAPI):
 
     if settings.SCHEDULER_ENABLED:
         try:
-            from scheduler.upstox_equity import UpstoxScheduler
+            from scheduler.upstox_variables import UpstoxScheduler
 
             scheduler_instance = UpstoxScheduler(settings)
 
@@ -94,6 +94,42 @@ async def lifespan(app: FastAPI):
     else:
         logger.info("Scheduler disabled via settings")
 
+    # ── Index Poller Background Task ──────────────────────────────────
+    index_poll_task = None
+
+    async def _index_poller():
+        """Background task: periodically fetch index data and broadcast via WS."""
+        import asyncio
+        from app.services.index_service import get_index_data
+        from app.config.holidays import is_market_open
+        from app.websocket.connection_manager import manager
+
+        while True:
+            try:
+                await asyncio.sleep(60)  # Poll every 60 seconds
+
+                # Only fetch during market hours (or slightly around open/close)
+                access_token = None
+                if scheduler_instance:
+                    access_token = scheduler_instance.access_token
+
+                if access_token:
+                    data = get_index_data(access_token=access_token)
+                    if data:
+                        await manager.broadcast_json({
+                            "type": "index_update",
+                            "data": data,
+                        })
+            except asyncio.CancelledError:
+                break
+            except Exception as e:
+                logger.warning(f"Index poller error: {e}")
+                await asyncio.sleep(30)
+
+    import asyncio
+    index_poll_task = asyncio.create_task(_index_poller())
+    logger.info("Index poller background task started")
+
     # Store references on app state for access from route handlers
     app.state.live_cache = live_cache
     app.state.scheduler = scheduler_instance
@@ -104,6 +140,12 @@ async def lifespan(app: FastAPI):
 
     # ── Shutdown ────────────────────────────────────────────────────────
     logger.info("Shutting down MarketPulse backend...")
+    if index_poll_task:
+        index_poll_task.cancel()
+        try:
+            await index_poll_task
+        except asyncio.CancelledError:
+            pass
     if scheduler_instance:
         scheduler_instance.stop()
     logger.info("Shutdown complete")
@@ -136,6 +178,14 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ── Proxy Keep-Alive Fix Middleware ─────────────────────────────────
+    from fastapi import Request
+    @app.middleware("http")
+    async def force_connection_close(request: Request, call_next):
+        response = await call_next(request)
+        response.headers["Connection"] = "close"
+        return response
 
     # ── API Routers ─────────────────────────────────────────────────────
     from app.api.dashboard import router as dashboard_router

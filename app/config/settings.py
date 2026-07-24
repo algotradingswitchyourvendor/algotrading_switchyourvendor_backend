@@ -30,6 +30,7 @@ class Settings(BaseSettings):
     S3_BUCKET_NAME: str = "rahul-upstox01"
     S3_TICKER_FILE_KEY: str = "Merged_Equities_BSE_NSE.xlsx"
     S3_PARQUET_PREFIX: str = "equitydata"
+    S3_VARIABLES_PREFIX: str = "Variables"
 
     # ── Server Configuration ────────────────────────────────────────────
     API_HOST: str = "0.0.0.0"
