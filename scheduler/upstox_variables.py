@@ -145,27 +145,31 @@ class UpstoxScheduler:
         self._download_variables_file(force=True)
 
     def fetch_hist_from_local_disk(self, hour: int, minute: int) -> dict:
-        """Process the local variables parquet file in small chunks."""
+        """Process the local variables parquet file using PyArrow predicate pushdown."""
+        import pyarrow.dataset as ds
+        import gc
         try:
             if not os.path.exists(self.local_variables_file):
                 return {}
                 
-            pf = pq.ParquetFile(self.local_variables_file)
-            chunks = []
+            dataset = ds.dataset(self.local_variables_file, format="parquet")
+            # Pushdown filter to parquet engine (avoids full table scan)
+            table = dataset.to_table(filter=(ds.field('Hour') == hour) & (ds.field('Minute') == minute))
+            df = table.to_pandas()
             
-            for batch in pf.iter_batches(batch_size=20000):
-                df_batch = batch.to_pandas()
-                filtered = df_batch[(df_batch['Hour'] == hour) & (df_batch['Minute'] == minute)]
-                if not filtered.empty:
-                    chunks.append(filtered)
-                    
-            if not chunks:
+            if df.empty:
+                del table, df
                 return {}
                 
-            df = pd.concat(chunks, ignore_index=True)
             df['TradingSymbol'] = df['TradingSymbol'].astype(str).str.strip()
             df = df.drop_duplicates(subset=['TradingSymbol'])
-            return df.set_index('TradingSymbol').to_dict(orient='index')
+            result = df.set_index('TradingSymbol').to_dict(orient='index')
+            
+            # Explicitly release large structures
+            del table, df
+            gc.collect()
+            
+            return result
         except Exception as e:
             logger.error(f"Local disk read failed: {e}")
             return {}
@@ -586,29 +590,84 @@ class UpstoxScheduler:
 
     def upload_to_s3(self, df: pd.DataFrame) -> None:
         """Uploads to S3 by appending to today's parquet file (Preserves History compatibility)."""
+        import time
+        import gc
+        import pyarrow as pa
+        import pyarrow.parquet as pq
         try:
             file_name = self._generate_daily_filename()
             try:
+                t0 = time.time()
                 parquet_obj = self.s3_client.get_object(
                     Bucket=self.settings.S3_BUCKET_NAME, Key=file_name
                 )
-                existing_df = pd.read_parquet(BytesIO(parquet_obj["Body"].read()))
+                body_bytes = parquet_obj["Body"].read()
+                t_download = time.time() - t0
+                
+                t0 = time.time()
+                existing_table = pq.read_table(BytesIO(body_bytes))
+                t_read = time.time() - t0
+                
+                # Free the large bytes string immediately
+                del body_bytes
+                gc.collect()
             except self.s3_client.exceptions.NoSuchKey:
-                existing_df = pd.DataFrame()
+                existing_table = None
+                t_download, t_read = 0.0, 0.0
             except Exception as e:
                 logger.warning(f"Could not read existing parquet: {e}")
-                existing_df = pd.DataFrame()
+                existing_table = None
+                t_download, t_read = 0.0, 0.0
 
-            combined_df = pd.concat([existing_df, df], ignore_index=True)
+            t0 = time.time()
+            if existing_table is not None:
+                # Convert new data to PyArrow matching the existing schema
+                try:
+                    new_table = pa.Table.from_pandas(df, schema=existing_table.schema)
+                except Exception:
+                    new_table = pa.Table.from_pandas(df)
+                    
+                # Zero-copy concatenation (just links chunk pointers in memory)
+                combined_table = pa.concat_tables([existing_table, new_table], promote_options='default')
+                
+                # Release existing tables
+                existing_mem = existing_table.nbytes / (1024**2)
+                del existing_table, new_table
+                gc.collect()
+            else:
+                combined_table = pa.Table.from_pandas(df)
+                existing_mem = 0.0
+            t_concat = time.time() - t0
+            
+            logger.info("=== S3 MEMORY PROFILING (PYARROW) ===")
+            logger.info(f"existing_table memory: {existing_mem:.2f} MB")
+            logger.info(f"new_df pandas memory: {df.memory_usage(deep=True).sum() / (1024**2):.2f} MB")
+            logger.info(f"combined_table memory: {combined_table.nbytes / (1024**2):.2f} MB")
+            logger.info("=== S3 TIMING PROFILING ===")
+            logger.info(f"S3 download: {t_download:.2f} sec")
+            logger.info(f"pq.read_table(): {t_read:.2f} sec")
+            logger.info(f"pa.concat_tables(): {t_concat:.2f} sec")
+
             parquet_buffer = BytesIO()
-            combined_df.to_parquet(parquet_buffer, index=False)
+            pq.write_table(combined_table, parquet_buffer)
+            
+            # Release massive combined table before S3 upload
+            del combined_table
+            gc.collect()
 
+            t0 = time.time()
             self.s3_client.put_object(
                 Bucket=self.settings.S3_BUCKET_NAME,
                 Key=file_name,
                 Body=parquet_buffer.getvalue(),
             )
+            t_upload = time.time() - t0
+            logger.info(f"upload: {t_upload:.2f} sec")
             logger.info(f"S3 upload complete: s3://{self.settings.S3_BUCKET_NAME}/{file_name}")
+            
+            # Final cleanup
+            del parquet_buffer
+            gc.collect()
         except Exception as e:
             logger.error(f"Error uploading to S3: {e}")
 
