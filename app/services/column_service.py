@@ -48,6 +48,8 @@ DEFAULT_VISIBLE = {
 # ── Columns to exclude from metadata (internal/redundant) ──────────────
 EXCLUDED_COLUMNS = {
     "instrument_key",  # Internal ID, same as Instrument
+    "Prev_Day_Close",  # Redundant with Close (both = previous day close)
+    "Symbol",          # Raw API key, trading_symbol is the clean display name
 }
 
 # ── Group Inference Patterns ────────────────────────────────────────────
@@ -68,15 +70,28 @@ GROUP_NAME_PATTERNS = {
     "change": "Performance",
     "return": "Performance",
     "pct": "Performance",
+    "movement": "Performance",
+    "52w": "Performance",
+    "week_52": "Performance",
     "volume": "Volume",
     "quantity": "Volume",
     "qty": "Volume",
+    "dlv": "Volume",
+    "vol_": "Volume",
+    "tbq": "Volume",
+    "tsq": "Volume",
+    "calculated": "Indicator",
     "signal": "Indicator",
     "sentiment": "Indicator",
     "score": "Indicator",
     "momentum": "Indicator",
     "vwap": "Indicator",
     "delta": "Indicator",
+    "mom": "Indicator",
+    "premarket": "Pre-Market",
+    "prev_daily": "Historical",
+    "prev_premarket": "Historical",
+    "prev_day": "Historical",
     "oi": "Derivatives",
     "interest": "Derivatives",
     "circuit": "Limits",
@@ -84,6 +99,9 @@ GROUP_NAME_PATTERNS = {
     "time": "Metadata",
     "timestamp": "Metadata",
     "date": "Metadata",
+    "hour": "Metadata",
+    "minute": "Metadata",
+    "second": "Metadata",
     "symbol": "Identity",
     "instrument": "Identity",
     "exchange": "Identity",
@@ -106,11 +124,14 @@ UNIT_PATTERNS = {
     "circuit": "₹",
     "limit": "₹",
     "vwap": "₹",
+    "delta_average_price": "₹",
+    "traded_value": "₹ Cr",
     "pct": "%",
     "percent": "%",
     "gain": "%",
     "change_pct": "%",
     "return": "%",
+    "movement_from": "%",
 }
 
 # ── Operator Sets by Type ───────────────────────────────────────────────
@@ -194,12 +215,19 @@ def _infer_filter_type(column_name: str, dtype, unique_count: int) -> str:
 
 def get_column_metadata(cache: LiveCache) -> list[ColumnMetadata]:
     """
-    Generate dynamic column metadata by introspecting the current DataFrame.
+    Generate dynamic column metadata by introspecting the current Live DataFrame.
+    """
+    df = cache.get_snapshot()
+    return generate_metadata_from_df(df)
+
+
+def generate_metadata_from_df(df: Optional[pd.DataFrame]) -> list[ColumnMetadata]:
+    """
+    Generate dynamic column metadata by introspecting a DataFrame.
     
     This is the core function that makes the entire frontend dynamic.
     Called by GET /api/v1/metadata.
     """
-    df = cache.get_snapshot()
     if df is None or df.empty:
         return []
 
@@ -259,7 +287,8 @@ def get_column_groups(metadata: list[ColumnMetadata]) -> list[str]:
     # Preserve a meaningful order
     preferred_order = [
         "Identity", "Price", "Performance", "Volume",
-        "Indicator", "Derivatives", "Limits", "Metadata", "Other",
+        "Indicator", "Pre-Market", "Historical",
+        "Derivatives", "Limits", "Metadata", "Other",
     ]
     found_groups = {m.group for m in metadata}
     ordered = [g for g in preferred_order if g in found_groups]

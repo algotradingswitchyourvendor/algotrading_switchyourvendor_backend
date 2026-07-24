@@ -2,6 +2,7 @@ import asyncio
 import logging
 import os
 import time
+from pathlib import Path
 from typing import Optional, Tuple
 
 from app.config.settings import get_settings
@@ -26,14 +27,12 @@ class CacheManager:
         self.downloader = DownloadManager(self.validation)
         
         # Ensure cache directory exists
-        os.makedirs(self.settings.CACHE_DIRECTORY, exist_ok=True)
+        self.cache_dir = Path(self.settings.CACHE_DIRECTORY)
+        self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def get_parquet_path(self, target_date: str) -> str:
         """Returns the full path to the parquet cache file."""
-        return os.path.join(
-            self.settings.CACHE_DIRECTORY,
-            f"{target_date}_Equity.parquet"
-        )
+        return str(self.cache_dir / f"{target_date}_Equity.parquet")
 
     def startup_recovery(self) -> None:
         """
@@ -45,12 +44,12 @@ class CacheManager:
         deleted_count = 0
 
         try:
-            files = os.listdir(self.settings.CACHE_DIRECTORY)
+            files = os.listdir(self.cache_dir)
         except FileNotFoundError:
             return
 
         for filename in files:
-            file_path = os.path.join(self.settings.CACHE_DIRECTORY, filename)
+            file_path = str(self.cache_dir / filename)
             
             # 1. Clean tmp orphans from crashed downloads
             if filename.endswith(".tmp"):
@@ -98,7 +97,7 @@ class CacheManager:
         until below CACHE_MAX_SIZE_GB.
         """
         try:
-            files = os.listdir(self.settings.CACHE_DIRECTORY)
+            files = os.listdir(self.cache_dir)
         except FileNotFoundError:
             return
 
@@ -108,7 +107,7 @@ class CacheManager:
         for filename in files:
             if filename.endswith(".parquet"):
                 target_date = filename.split("_")[0]
-                parquet_path = os.path.join(self.settings.CACHE_DIRECTORY, filename)
+                parquet_path = str(self.cache_dir / filename)
                 meta = self.metadata.load_metadata(target_date)
                 
                 if not meta:
@@ -192,10 +191,15 @@ class CacheManager:
             # 3. Compare Cache vs S3
             is_valid_cache = False
             if local_meta and local_meta.get("etag") == s3_etag:
-                if self.validation.verify_cache_integrity(parquet_path):
-                    is_valid_cache = True
-                    self.metadata.touch_metadata(target_date)
-                    logger.debug(f"Cache Hit: {target_date}")
+                if os.path.exists(parquet_path):
+                    if self.validation.verify_cache_integrity(parquet_path):
+                        is_valid_cache = True
+                        self.metadata.touch_metadata(target_date)
+                        logger.debug(f"Cache Hit: {target_date}")
+                    else:
+                        logger.warning(f"Cached parquet {target_date} corrupted. Deleting.")
+                        os.remove(parquet_path)
+                        self.metadata.delete_metadata(target_date)
 
             if is_valid_cache:
                 return parquet_path

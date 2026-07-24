@@ -5,17 +5,23 @@ GET /api/v1/metadata — Full column metadata for frontend dynamic rendering
 GET /api/v1/columns — Simple column name list
 """
 
-from fastapi import APIRouter, Request
+from typing import Optional
+from fastapi import APIRouter, Request, Query
 
 from app.config.holidays import get_market_status
 from app.schemas.response import success_response, error_response
-from app.services.column_service import get_column_metadata, get_column_groups
+from app.services.column_service import get_column_metadata, get_column_groups, generate_metadata_from_df
+from app.services.history_service import get_schema_dataframe
 
 router = APIRouter()
 
 
 @router.get("/metadata")
-async def get_metadata(request: Request):
+async def get_metadata(
+    request: Request,
+    target: str = Query("live", description="Execution target (live or history)"),
+    date: Optional[str] = Query(None, description="History date (YYYY-MM-DD)")
+):
     """
     Return dynamic column metadata.
 
@@ -29,15 +35,28 @@ async def get_metadata(request: Request):
     Whenever the backend adds a new DataFrame column, this endpoint 
     automatically includes it in the response.
     """
-    cache = request.app.state.live_cache
+    if target == "history":
+        if not date:
+            return error_response(
+                code="MISSING_DATE",
+                message="Date parameter is required when target is history.",
+            )
+        df = await get_schema_dataframe(date)
+        if df is None:
+            return error_response(
+                code="NO_DATA",
+                message=f"No historical data found for date {date}.",
+            )
+        metadata = generate_metadata_from_df(df)
+    else:
+        cache = request.app.state.live_cache
+        if not cache.is_populated:
+            return error_response(
+                code="NO_DATA",
+                message="Metadata not available yet. Waiting for first data fetch.",
+            )
+        metadata = get_column_metadata(cache)
 
-    if not cache.is_populated:
-        return error_response(
-            code="NO_DATA",
-            message="Metadata not available yet. Waiting for first data fetch.",
-        )
-
-    metadata = get_column_metadata(cache)
     groups = get_column_groups(metadata)
 
     return success_response(

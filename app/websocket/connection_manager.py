@@ -20,14 +20,13 @@ from typing import Optional
 from fastapi import WebSocket
 from starlette.websockets import WebSocketState
 
-from app.config.holidays import get_market_status, is_market_open
+from app.config.holidays import get_market_status
 from app.websocket.events import (
     WSClientAction,
     msg_connected,
     msg_heartbeat,
     msg_error,
     msg_snapshot_update,
-    msg_market_closed,
 )
 
 logger = logging.getLogger(__name__)
@@ -93,11 +92,29 @@ class ConnectionManager:
                 await self._send(websocket, {"type": "pong"})
 
             elif action == WSClientAction.SUBSCRIBE_SCANNER:
-                conditions = data.get("conditions", [])
-                self._scanner_subscriptions[websocket] = conditions
-                logger.info(
-                    f"Client subscribed to scanner with {len(conditions)} conditions"
-                )
+                req_data = data.get("request")
+                if req_data:
+                    from app.schemas.query import UnifiedQueryRequest
+                    from app.services.query_engine.parser import parse_query_text
+                    
+                    try:
+                        # Parse once and replace query_text with conditions
+                        if req_data.get("query_text"):
+                            parsed_conditions = parse_query_text(req_data["query_text"])
+                            req_data["conditions"] = parsed_conditions
+                            req_data["query_text"] = None
+                            
+                        req = UnifiedQueryRequest(**req_data)
+                        self._scanner_subscriptions[websocket] = req
+                        logger.info("Client subscribed to scanner with UnifiedQueryRequest")
+                    except Exception as e:
+                        logger.error(f"Failed to process scanner subscription request: {e}")
+                else:
+                    conditions = data.get("conditions", [])
+                    self._scanner_subscriptions[websocket] = conditions
+                    logger.info(
+                        f"Client subscribed to scanner with {len(conditions)} conditions"
+                    )
 
             elif action == WSClientAction.UNSUBSCRIBE_SCANNER:
                 self._scanner_subscriptions.pop(websocket, None)
@@ -118,23 +135,17 @@ class ConnectionManager:
         Broadcast delta update to all connected clients.
         
         Called by the publisher when LiveCache is updated.
-        Only sends during market hours.
+        The scheduler already gates on market hours, so this method
+        always forwards the delta it receives.
         """
         if not self._connections:
             return
 
-        if not is_market_open():
-            # Send market_closed once, then stop broadcasting
-            from app.cache.live_cache import live_cache
-            last_updated = live_cache.last_updated
-            last_time = last_updated.isoformat() if last_updated else None
-            message = msg_market_closed(last_time)
-        else:
-            message = msg_snapshot_update(
-                changed_rows=changed_rows,
-                snapshot_id=snapshot_id,
-                total_instruments=total_instruments,
-            )
+        message = msg_snapshot_update(
+            changed_rows=changed_rows,
+            snapshot_id=snapshot_id,
+            total_instruments=total_instruments,
+        )
 
         await self._broadcast(message)
 
@@ -149,24 +160,30 @@ class ConnectionManager:
 
         from app.cache.live_cache import live_cache
         from app.services.scanner_service import evaluate_scanner
+        from app.services.query_engine.engine import execute_query
 
-        for ws, conditions in list(self._scanner_subscriptions.items()):
+        for ws, sub_data in list(self._scanner_subscriptions.items()):
             if ws not in self._connections:
                 self._scanner_subscriptions.pop(ws, None)
                 continue
 
             try:
-                records, meta = evaluate_scanner(
-                    cache=live_cache,
-                    conditions=conditions,
-                    mode="live",
-                    page=1,
-                    page_size=500,
-                )
-                # Full result set is sent each cycle. Scanner conditions can produce
-                # entirely different result sets between snapshots, making row-level
-                # delta tracking unreliable without per-client state caching.
-                # For scanner result sets (typically <500 rows), this is optimal.
+                if isinstance(sub_data, list):
+                    if not sub_data:
+                        continue
+                    records, meta = evaluate_scanner(
+                        cache=live_cache,
+                        conditions=sub_data,
+                        mode="live",
+                        page=1,
+                        page_size=500,
+                    )
+                else:
+                    records, meta = execute_query(
+                        request=sub_data,
+                        cache=live_cache,
+                    )
+                    
                 await self._send(ws, {
                     "type": "scanner_update",
                     "data": records,
@@ -188,6 +205,12 @@ class ConnectionManager:
         # Clean up disconnected clients
         for ws in disconnected:
             self.disconnect(ws)
+
+    async def broadcast_json(self, message: dict) -> None:
+        """Public broadcast: send a JSON message to all connected clients."""
+        if not self._connections:
+            return
+        await self._broadcast(message)
 
     async def _send(self, websocket: WebSocket, message: dict) -> None:
         """Send a message to a single client."""
