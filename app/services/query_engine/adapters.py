@@ -10,16 +10,43 @@ Adapters:
 """
 
 import logging
-from typing import Optional
+from typing import Optional, Dict
+from abc import ABC, abstractmethod
+from dataclasses import dataclass
 
 import pandas as pd
 
 from app.cache.live_cache import LiveCache
+from app.schemas.query import UnifiedQueryRequest
 
 logger = logging.getLogger(__name__)
 
+@dataclass
+class AdapterResult:
+    df: pd.DataFrame
+    is_pre_processed: bool = False
+    matched_count: Optional[int] = None
+    total_scanned: Optional[int] = None
+    timings: Optional[Dict[str, float]] = None
+    bullish_count: Optional[int] = None
+    bearish_count: Optional[int] = None
 
-class LiveAdapter:
+class BaseAdapter(ABC):
+    """Provides the current live market snapshot as a DataFrame."""
+
+    @abstractmethod
+    def get_dataframe(
+        self,
+        cache: Optional[LiveCache] = None,
+        request: Optional[UnifiedQueryRequest] = None,
+    ) -> pd.DataFrame | AdapterResult:
+        """
+        Subclasses should return a Pandas DataFrame or an AdapterResult.
+        """
+        pass
+
+
+class LiveAdapter(BaseAdapter):
     """Provides the current live market snapshot as a DataFrame."""
 
     def get_dataframe(self, cache: LiveCache) -> pd.DataFrame:
@@ -39,32 +66,26 @@ class LiveAdapter:
         return df
 
 
-class HistoryAdapter:
+class HistoryAdapter(BaseAdapter):
     """Provides historical data from Parquet files as a DataFrame."""
 
     def get_dataframe(
         self,
-        date: Optional[str] = None,
-        start_time: Optional[str] = None,
-        end_time: Optional[str] = None,
-    ) -> pd.DataFrame:
+        request: UnifiedQueryRequest,
+    ) -> AdapterResult:
         """
         Load historical data for the given date/time range.
 
         Returns:
-            pd.DataFrame with historical records, or empty DataFrame.
+            AdapterResult with historical records, or empty DataFrame.
         """
-        from app.services.history_service import get_historical_data
+        from app.services.history_service import get_historical_dataframe
         import asyncio
 
         try:
             # history_service may be async; handle both cases
-            coro = get_historical_data(
-                target_date=date,
-                start_time=start_time,
-                end_time=end_time,
-                page=1,
-                page_size=500_000,  # Load all rows for scanning
+            coro = get_historical_dataframe(
+                request=request
             )
 
             # If we're inside an event loop, run directly; otherwise use asyncio.run
@@ -73,15 +94,15 @@ class HistoryAdapter:
                 # We're inside an async context — create a task
                 import concurrent.futures
                 with concurrent.futures.ThreadPoolExecutor() as pool:
-                    records, _ = pool.submit(asyncio.run, coro).result()
+                    result = pool.submit(asyncio.run, coro).result()
             except RuntimeError:
                 # No running loop — safe to use asyncio.run
-                records, _ = asyncio.run(coro)
+                result = asyncio.run(coro)
 
-            if not records:
+            if result is None:
                 return pd.DataFrame()
 
-            return pd.DataFrame(records)
+            return result
 
         except Exception as e:
             logger.error(f"HistoryAdapter failed: {e}")

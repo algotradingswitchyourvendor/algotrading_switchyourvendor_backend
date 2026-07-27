@@ -29,6 +29,15 @@ async def get_historical_data(
         page_size=page_size
     )
 
+from typing import Optional, Any
+
+async def get_historical_dataframe(
+    request: Any = None,
+) -> Any:
+    return await _service.get_historical_dataframe(
+        request=request
+    )
+
 async def get_stock_timeline(
     symbol: str,
     target_date: Optional[str] = None,
