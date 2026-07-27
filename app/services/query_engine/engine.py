@@ -20,7 +20,7 @@ Pipeline:
 import logging
 import math
 import time
-from typing import Optional
+from typing import Optional, Any
 
 import pandas as pd
 
@@ -61,11 +61,24 @@ def execute_query(
     start_time = time.perf_counter()
 
     # ── Step 1: Resolve conditions ──────────────────────────────────
-    conditions = _resolve_conditions(request)
+    conditions = resolve_conditions(request)
 
     # ── Step 2: Load DataFrame via adapter ──────────────────────────
-    df = _load_dataframe(request, cache)
-    if df.empty:
+    adapter_result = _load_dataframe(request, cache)
+    
+    # Check if we got an AdapterResult or a raw DataFrame
+    if hasattr(adapter_result, "is_pre_processed"):
+        df = adapter_result.df
+        is_pre_processed = adapter_result.is_pre_processed
+        matched_count = adapter_result.matched_count
+        total_scanned = adapter_result.total_scanned or len(df)
+    else:
+        df = adapter_result
+        is_pre_processed = False
+        matched_count = None
+        total_scanned = len(df)
+
+    if df.empty and not is_pre_processed:
         return [], _build_meta(
             total=0,
             total_scanned=0,
@@ -75,8 +88,6 @@ def execute_query(
             conditions_count=len(conditions),
             start_time=start_time,
         )
-
-    total_scanned = len(df)
 
     # ── Step 3: Validate conditions ─────────────────────────────────
     available_columns = set(df.columns)
@@ -98,10 +109,14 @@ def execute_query(
         return [], meta
 
     # ── Step 4: Apply conditions ────────────────────────────────────
-    filtered = apply_conditions(df, conditions)
-    matched = len(filtered)
+    if is_pre_processed:
+        filtered = df
+        matched = matched_count if matched_count is not None else len(filtered)
+    else:
+        filtered = apply_conditions(df, conditions)
+        matched = len(filtered)
 
-    if filtered.empty:
+    if filtered.empty and not is_pre_processed:
         return [], _build_meta(
             total=0,
             total_scanned=total_scanned,
@@ -114,7 +129,7 @@ def execute_query(
         )
 
     # ── Step 5: Sort ────────────────────────────────────────────────
-    if request.sort_by and request.sort_by in filtered.columns:
+    if not is_pre_processed and request.sort_by and request.sort_by in filtered.columns:
         try:
             ascending = request.sort_order == "asc"
             filtered = filtered.sort_values(
@@ -128,13 +143,20 @@ def execute_query(
     # ── Step 6: Paginate ────────────────────────────────────────────
     page_size = min(request.page_size, MAX_RESULT_ROWS)
     total_pages = math.ceil(matched / page_size) if matched > 0 else 0
-    start_idx = (request.page - 1) * page_size
-    end_idx = start_idx + page_size
-    paginated = filtered.iloc[start_idx:end_idx]
+    
+    if is_pre_processed:
+        paginated = filtered
+    else:
+        start_idx = (request.page - 1) * page_size
+        end_idx = start_idx + page_size
+        paginated = filtered.iloc[start_idx:end_idx]
+        
     truncated = matched > MAX_RESULT_ROWS
 
     # ── Step 7: Convert to records ──────────────────────────────────
+    t_json = time.perf_counter()
     records = _df_to_records(paginated)
+    t_json_time = (time.perf_counter() - t_json) * 1000
 
     meta = _build_meta(
         total=matched,
@@ -148,6 +170,19 @@ def execute_query(
         total_pages=total_pages,
         validation_errors=validation_errors,
     )
+    
+    if is_pre_processed and hasattr(adapter_result, "bullish_count"):
+        meta["bullish_count"] = adapter_result.bullish_count
+        meta["bearish_count"] = adapter_result.bearish_count
+    
+    total_time = (time.perf_counter() - start_time) * 1000
+    
+    # Log detailed timings for Historical queries
+    if is_pre_processed and hasattr(adapter_result, "timings") and adapter_result.timings:
+        adapter_result.timings["JSON Serialization"] = t_json_time
+        adapter_result.timings["Total Query Time"] = total_time
+        timings_str = " | ".join(f"{k}: {v:.2f}ms" for k, v in adapter_result.timings.items())
+        logger.info(f"[Historical Scanner] {timings_str}")
 
     return records, meta
 
@@ -155,7 +190,7 @@ def execute_query(
 # ── Private Helpers ──────────────────────────────────────────────────────
 
 
-def _resolve_conditions(request: UnifiedQueryRequest) -> list[dict]:
+def resolve_conditions(request: UnifiedQueryRequest) -> list[dict]:
     """Convert request into a flat list of condition dicts."""
     # Text query takes priority if provided
     if request.query_text and request.query_text.strip():
@@ -185,15 +220,11 @@ def _resolve_conditions(request: UnifiedQueryRequest) -> list[dict]:
 def _load_dataframe(
     request: UnifiedQueryRequest,
     cache: LiveCache,
-) -> pd.DataFrame:
-    """Select the appropriate adapter and load data."""
+) -> Any:
+    """Select the appropriate adapter and load data. Returns DataFrame or AdapterResult."""
     if request.execution_target == "history":
         adapter = HistoryAdapter()
-        return adapter.get_dataframe(
-            date=request.date,
-            start_time=request.start_time,
-            end_time=request.end_time,
-        )
+        return adapter.get_dataframe(request=request)
     else:
         adapter = LiveAdapter()
         return adapter.get_dataframe(cache)

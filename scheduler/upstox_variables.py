@@ -21,7 +21,7 @@ from typing import Optional, Callable
 from io import BytesIO
 from datetime import datetime, timezone
 
-import pytz
+from zoneinfo import ZoneInfo
 import pandas as pd
 import requests
 import pyarrow.parquet as pq
@@ -36,7 +36,7 @@ import pyotp
 
 logger = logging.getLogger(__name__)
 
-IST = pytz.timezone("Asia/Kolkata")
+IST = ZoneInfo("Asia/Kolkata")
 
 
 class UpstoxScheduler:
@@ -174,14 +174,21 @@ class UpstoxScheduler:
             logger.error(f"Local disk read failed: {e}")
             return {}
 
-    # ── Authentication ──────────────────────────────────────────────────
+     # ── Authentication ──────────────────────────────────────────────────
 
     def auto_login(self) -> Optional[str]:
+        """
+        Authenticate with Upstox via Selenium headless browser.
+        Returns the access token or None on failure.
+        """
         try:
             options = Options()
             options.add_argument("--no-sandbox")
             options.add_argument("--headless=new")
+            options.add_argument("--disable-gpu")
+            options.add_argument("--window-size=1920,1080")
             options.add_argument("--disable-dev-shm-usage")
+            options.add_argument("--disable-blink-features=AutomationControlled")
 
             driver = webdriver.Chrome(options=options)
 
@@ -193,38 +200,41 @@ class UpstoxScheduler:
             )
 
             driver.get(url)
-            wait = WebDriverWait(driver, 30)
-            
-            def wait_for_page_load(driver, timeout=30):
-                WebDriverWait(driver, timeout).until(
-                    lambda d: d.execute_script('return document.readyState') == 'complete'
-                )
-            wait_for_page_load(driver)
 
-            username_input = wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="mobileNum"]')))
+            wait = WebDriverWait(driver, 30)
+
+            # Wait for React to render the mobile number input
+            username_input = wait.until(EC.visibility_of_element_located((By.ID, "mobileNum")))
             username_input.clear()
             username_input.send_keys(self.settings.UPSTOX_CLIENT_ID)
-            driver.find_element(By.XPATH, '//*[@id="getOtp"]').click()
 
+            wait.until(EC.element_to_be_clickable((By.ID, "getOtp"))).click()
+
+            # Wait for OTP input to become visible
+            password_input = wait.until(EC.visibility_of_element_located((By.ID, "otpNum")))
+            
+            # Enter TOTP
             totp = pyotp.TOTP(self.settings.UPSTOX_TOTP_SECRET).now()
-            time.sleep(5)
-
-            password_input = wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="otpNum"]')))
             password_input.clear()
             password_input.send_keys(totp)
-            driver.find_element(By.XPATH, '//*[@id="continueBtn"]').click()
-            time.sleep(5)
 
-            pin_input = wait.until(EC.visibility_of_element_located((By.XPATH, '//*[@id="pinCode"]')))
+            wait.until(EC.element_to_be_clickable((By.ID, "continueBtn"))).click()
+
+            # Wait for PIN input to become visible
+            pin_input = wait.until(EC.visibility_of_element_located((By.ID, "pinCode")))
             pin_input.clear()
             pin_input.send_keys(self.settings.UPSTOX_CLIENT_PIN)
 
             original_url = driver.current_url
-            driver.find_element(By.XPATH, '//*[@id="pinContinueBtn"]').click()
+            wait.until(EC.element_to_be_clickable((By.ID, "pinContinueBtn"))).click()
 
+            # Wait until the URL changes from the login page
             wait.until(EC.url_changes(original_url))
-            code = driver.current_url.split("?code=")[1]
 
+            redirected_url = driver.current_url
+            code = redirected_url.split("?code=")[1]
+
+            # Exchange code for token
             token_url = "https://api.upstox.com/v2/login/authorization/token"
             headers = {
                 "accept": "application/json",
@@ -240,7 +250,9 @@ class UpstoxScheduler:
             }
 
             response = requests.post(token_url, headers=headers, data=data)
-            access_token = response.json()["access_token"]
+            json_response = response.json()
+            access_token = json_response["access_token"]
+
             driver.quit()
             logger.info("Login successful")
             return str(access_token)
@@ -316,10 +328,24 @@ class UpstoxScheduler:
                 except Exception:
                     pass
 
-            return pd.DataFrame(rows)
+            try:
+                # Wrap pd.DataFrame to isolate if this is what crashes
+                result_df = pd.DataFrame(rows)
+                return result_df
+            except Exception as df_err:
+                logger.error(f"pd.DataFrame(rows) crashed! Length of rows: {len(rows)}")
+                if len(rows) > 0:
+                    logger.error(f"First row: {rows[0]}")
+                    logger.error(f"Types in first row: {[(k, type(v)) for k, v in rows[0].items()]}")
+                raise df_err
 
         except Exception as e:
-            logger.error(f"API request error in fetch_fno_data: {e}")
+            logger.error("=== RUNTIME BUG INVESTIGATION (fetch_fno_data) ===")
+            logger.error(f"Local variables at exception time:")
+            for k, v in locals().items():
+                if k not in ["self", "data", "rows"]:
+                    logger.error(f"{k}: {type(v)} = {v}")
+            logger.exception("API request error in fetch_fno_data:")
             return pd.DataFrame()
 
     def fetch_all_fno_data(self) -> pd.DataFrame:
@@ -618,6 +644,12 @@ class UpstoxScheduler:
                 logger.warning(f"Could not read existing parquet: {e}")
                 existing_table = None
                 t_download, t_read = 0.0, 0.0
+
+            int_cols = ["Hour", "Minute", "Second"]
+            
+            for col in int_cols:
+                if col in df.columns:
+                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int64")
 
             t0 = time.time()
             if existing_table is not None:

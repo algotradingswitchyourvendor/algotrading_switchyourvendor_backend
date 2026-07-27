@@ -3,13 +3,17 @@ import logging
 import math
 import time
 from datetime import datetime
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
+import duckdb
 import pandas as pd
 
 from app.config.settings import get_settings
 from app.services.history.cache_manager import CacheManager
 from app.services.column_service import _infer_group
+from app.services.query_engine.sql_translator import translate_conditions
+from app.services.query_engine.engine import resolve_conditions
+from app.services.query_engine.adapters import AdapterResult
 
 logger = logging.getLogger(__name__)
 
@@ -66,7 +70,7 @@ class HistoryService:
         Handles heavy disk I/O and CPU-bound string/datetime filtering.
         """
         pyarrow_start = time.perf_counter()
-        df = pd.read_parquet(parquet_path)
+        df = pd.read_parquet(parquet_path, engine="pyarrow", dtype_backend="pyarrow")
         pyarrow_elapsed = (time.perf_counter() - pyarrow_start) * 1000
         logger.info(f"PyArrow Read: {pyarrow_elapsed:.2f} ms")
         
@@ -151,7 +155,7 @@ class HistoryService:
             paginated_df = df.iloc[start_idx:end_idx]
             
             # Serialization (Lightweight: < 10ms, stays on Event Loop)
-            records = paginated_df.fillna("").to_dict(orient="records")
+            records = paginated_df.to_dict(orient="records")
             
             if timestamp_col:
                 for record in records:
@@ -170,7 +174,130 @@ class HistoryService:
             return records, meta
 
         except Exception as e:
-            logger.error(f"Error parsing parquet {parquet_path}: {e}")
+            logger.exception(f"Error parsing parquet {parquet_path}: {e}")
+            raise ValueError("Failed to process historical data file.") from e
+
+    async def get_historical_dataframe(
+        self,
+        request: Any = None,
+    ) -> AdapterResult:
+        """
+        Executes a historical query via DuckDB for optimal performance.
+        Returns an AdapterResult containing the paginated DataFrame and total_matched count.
+        """
+        if not request:
+            raise ValueError("request is required for historical dataframe")
+
+        target_date = request.date
+        if not target_date or target_date == "today":
+            target_date = datetime.now().strftime("%Y-%m-%d")
+
+        await self._trigger_cleanup_if_needed()
+
+        parquet_path = await self.cache_manager.get_or_download(target_date)
+        if not parquet_path:
+            raise ValueError(f"Historical data for {target_date} is unavailable.")
+
+        try:
+            # 1. Resolve conditions and generate SQL WHERE clause
+            t0 = time.perf_counter()
+            conditions = resolve_conditions(request)
+            sql_where = translate_conditions(conditions)
+            
+            # Additional filtering for start/end time
+            time_conditions = []
+            if request.start_time:
+                time_conditions.append(f'"Fetch Timestamp" >= \'{target_date}T{request.start_time}:00+05:30\'')
+            if request.end_time:
+                time_conditions.append(f'"Fetch Timestamp" <= \'{target_date}T{request.end_time}:00+05:30\'')
+                
+            if time_conditions:
+                time_sql = " AND ".join(time_conditions)
+                if sql_where == "1=1":
+                    sql_where = time_sql
+                else:
+                    sql_where = f"({sql_where}) AND {time_sql}"
+                
+            t_sql_trans = (time.perf_counter() - t0) * 1000
+                
+            # 2. Sort parameters
+            order_by = ""
+            if request.sort_by:
+                col = request.sort_by.replace("'", "''")
+                order = "ASC" if request.sort_order == "asc" else "DESC"
+                order_by = f'ORDER BY "{col}" {order} NULLS LAST'
+                
+            # 3. Pagination parameters
+            page_size = min(request.page_size, 5000)
+            offset = (request.page - 1) * page_size
+            
+            # Windows path handling for DuckDB
+            safe_path = str(parquet_path).replace('\\', '/')
+            table_ref = f"read_parquet('{safe_path}')"
+            
+            # Execute in a background thread to avoid blocking the asyncio loop
+            def _execute_duckdb():
+                timings = {}
+                
+                t_conn = time.perf_counter()
+                conn = duckdb.connect(':memory:')
+                timings["DuckDB Connect"] = (time.perf_counter() - t_conn) * 1000
+                
+                try:
+                    # Get total rows in parquet
+                    t_scan = time.perf_counter()
+                    total_scanned = conn.execute(f"SELECT COUNT(*) FROM {table_ref}").fetchone()[0]
+                    timings["Total Scanned Query"] = (time.perf_counter() - t_scan) * 1000
+                    
+                    # Get total matched for pagination metadata
+                    t_count = time.perf_counter()
+                    if sql_where == "1=1":
+                        total_matched = total_scanned
+                        count_query_where = ""
+                    else:
+                        count_query = f"SELECT COUNT(*) FROM {table_ref} WHERE {sql_where}"
+                        total_matched = conn.execute(count_query).fetchone()[0]
+                        count_query_where = f"WHERE {sql_where} AND"
+                    
+                    bullish_count = conn.execute(f"SELECT COUNT(*) FROM {table_ref} {count_query_where if sql_where != '1=1' else 'WHERE'} day_change_pct > 0").fetchone()[0]
+                    bearish_count = conn.execute(f"SELECT COUNT(*) FROM {table_ref} {count_query_where if sql_where != '1=1' else 'WHERE'} day_change_pct < 0").fetchone()[0]
+                    timings["COUNT Query"] = (time.perf_counter() - t_count) * 1000
+                    
+                    # Fetch paginated dataframe (DuckDB Query + Materialization)
+                    t_exec = time.perf_counter()
+                    where_clause = "" if sql_where == "1=1" else f"WHERE {sql_where}"
+                    data_query = f"SELECT * FROM {table_ref} {where_clause} {order_by} LIMIT {page_size} OFFSET {offset}"
+                    rel = conn.execute(data_query)
+                    timings["DuckDB Query"] = (time.perf_counter() - t_exec) * 1000
+                    
+                    t_mat = time.perf_counter()
+                    # Bypasses Pandas 3.0 pyarrow timezone conversion crash
+                    df = rel.arrow().read_all().to_pandas(types_mapper=pd.ArrowDtype)
+                    timings["Materialization"] = (time.perf_counter() - t_mat) * 1000
+                    
+                    return total_scanned, total_matched, bullish_count, bearish_count, df, timings
+                finally:
+                    conn.close()
+                    
+            total_scanned, total_matched, bullish_count, bearish_count, df, timings = await asyncio.to_thread(_execute_duckdb)
+            
+            # Inject translation time
+            timings["SQL Translation"] = t_sql_trans
+            
+            # Return wrapped result so QueryEngine skips Pandas execution
+            # We'll pass timings inside AdapterResult so engine can log the full picture
+            return AdapterResult(
+                df=df,
+                is_pre_processed=True,
+                matched_count=total_matched,
+                total_scanned=total_scanned,
+                timings=timings,
+                bullish_count=bullish_count,
+                bearish_count=bearish_count
+            )
+            
+        except Exception as e:
+            logger.exception(f"Error parsing parquet {parquet_path}: {e}")
             raise ValueError("Failed to process historical data file.") from e
 
     async def get_stock_timeline(self, symbol: str, target_date: str = "today") -> List[Dict]:
@@ -206,7 +333,7 @@ class HistoryService:
                 
             df_minute = df_minute.reset_index()
             
-            records = df_minute.fillna("").to_dict(orient="records")
+            records = df_minute.to_dict(orient="records")
             for record in records:
                 if isinstance(record.get(timestamp_col), pd.Timestamp):
                     record[timestamp_col] = record[timestamp_col].isoformat() + "Z"
@@ -219,7 +346,7 @@ class HistoryService:
 
     async def list_available_dates(self) -> List[str]:
         """List all dates that have historical parquet files."""
-        return await asyncio.to_thread(self._list_dates)
+        return await self._list_dates()
 
     async def get_schema_dataframe(self, target_date: str) -> Optional[pd.DataFrame]:
         """
@@ -231,7 +358,8 @@ class HistoryService:
             # We don't need data, just the schema. Read 1 row to get full dtype/column info.
             # Reading 1 row is extremely fast with Parquet.
             # Using asyncio.to_thread because read_parquet is blocking I/O.
-            df = await asyncio.to_thread(pd.read_parquet, parquet_path)
+            # dtype_backend="pyarrow" avoids Pandas 3.0 tz_standardize crashes with PyArrow PyTZ conversion
+            df = await asyncio.to_thread(pd.read_parquet, parquet_path, engine="pyarrow", dtype_backend="pyarrow")
             return df.head(1)
         except Exception as e:
             logger.error(f"Failed to load schema for {target_date}: {e}")

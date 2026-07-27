@@ -23,7 +23,7 @@ class ScannerRequest(BaseModel):
     sort_by: Optional[str] = Field(None, description="Column to sort results by")
     sort_order: str = Field("desc", description="'asc' or 'desc'")
     page: int = Field(1, ge=1, description="Page number")
-    page_size: int = Field(50, ge=1, le=500, description="Results per page")
+    page_size: int = Field(50, ge=1, le=5000, description="Results per page")
     # Historical mode params
     date: Optional[str] = Field(None, description="Date for historical scan")
     start_time: Optional[str] = Field(None, description="Start time for historical scan")
