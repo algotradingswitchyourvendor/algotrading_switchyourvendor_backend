@@ -45,7 +45,6 @@ class ConnectionManager:
 
     def __init__(self) -> None:
         self._connections: set[WebSocket] = set()
-        self._scanner_subscriptions: dict[WebSocket, list[dict]] = {}
         self._lock = asyncio.Lock()
         self._heartbeat_task: Optional[asyncio.Task] = None
 
@@ -77,7 +76,6 @@ class ConnectionManager:
     def disconnect(self, websocket: WebSocket) -> None:
         """Remove a disconnected client."""
         self._connections.discard(websocket)
-        self._scanner_subscriptions.pop(websocket, None)
         logger.info(
             f"WebSocket client disconnected. Active: {self.active_count}"
         )
@@ -90,35 +88,6 @@ class ConnectionManager:
 
             if action == WSClientAction.PING:
                 await self._send(websocket, {"type": "pong"})
-
-            elif action == WSClientAction.SUBSCRIBE_SCANNER:
-                req_data = data.get("request")
-                if req_data:
-                    from app.schemas.query import UnifiedQueryRequest
-                    from app.services.query_engine.parser import parse_query_text
-                    
-                    try:
-                        # Parse once and replace query_text with conditions
-                        if req_data.get("query_text"):
-                            parsed_conditions = parse_query_text(req_data["query_text"])
-                            req_data["conditions"] = parsed_conditions
-                            req_data["query_text"] = None
-                            
-                        req = UnifiedQueryRequest(**req_data)
-                        self._scanner_subscriptions[websocket] = req
-                        logger.info("Client subscribed to scanner with UnifiedQueryRequest")
-                    except Exception as e:
-                        logger.error(f"Failed to process scanner subscription request: {e}")
-                else:
-                    conditions = data.get("conditions", [])
-                    self._scanner_subscriptions[websocket] = conditions
-                    logger.info(
-                        f"Client subscribed to scanner with {len(conditions)} conditions"
-                    )
-
-            elif action == WSClientAction.UNSUBSCRIBE_SCANNER:
-                self._scanner_subscriptions.pop(websocket, None)
-                logger.info("Client unsubscribed from scanner")
 
         except json.JSONDecodeError:
             await self._send(
@@ -148,49 +117,6 @@ class ConnectionManager:
         )
 
         await self._broadcast(message)
-
-    async def broadcast_scanner_updates(self) -> None:
-        """
-        Evaluate scanner conditions for subscribed clients and push delta changes.
-        
-        This runs after each snapshot update for clients with active scanner subscriptions.
-        """
-        if not self._scanner_subscriptions:
-            return
-
-        from app.cache.live_cache import live_cache
-        from app.services.scanner_service import evaluate_scanner
-        from app.services.query_engine.engine import execute_query
-
-        for ws, sub_data in list(self._scanner_subscriptions.items()):
-            if ws not in self._connections:
-                self._scanner_subscriptions.pop(ws, None)
-                continue
-
-            try:
-                if isinstance(sub_data, list):
-                    if not sub_data:
-                        continue
-                    records, meta = evaluate_scanner(
-                        cache=live_cache,
-                        conditions=sub_data,
-                        mode="live",
-                        page=1,
-                        page_size=500,
-                    )
-                else:
-                    records, meta = execute_query(
-                        request=sub_data,
-                        cache=live_cache,
-                    )
-                    
-                await self._send(ws, {
-                    "type": "scanner_update",
-                    "data": records,
-                    "meta": meta,
-                })
-            except Exception as e:
-                logger.error(f"Scanner broadcast error: {e}")
 
     async def _broadcast(self, message: dict) -> None:
         """Send a message to all connected clients."""
@@ -236,7 +162,6 @@ class ConnectionManager:
             except Exception:
                 pass
         self._connections.clear()
-        self._scanner_subscriptions.clear()
 
 
 # ── Module-level singleton ──────────────────────────────────────────────

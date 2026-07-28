@@ -69,9 +69,6 @@ async def _async_publish(
             total_instruments=total_instruments,
         )
 
-        # Also update scanner subscribers
-        await manager.broadcast_scanner_updates()
-
         logger.debug(
             f"WS broadcast: {len(changed_rows)} changed rows, "
             f"snapshot_id={snapshot_id}, clients={manager.active_count}"

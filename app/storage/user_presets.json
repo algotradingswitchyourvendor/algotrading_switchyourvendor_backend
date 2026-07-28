@@ -1,0 +1,188 @@
+[
+  {
+    "name": "Regression Test Preset (Updated)",
+    "description": "Testing save",
+    "scanner_type": "any",
+    "version": 2,
+    "request": {
+      "conditions": [
+        {
+          "column": "Volume",
+          "operator": ">",
+          "value": 50000,
+          "logical": "AND"
+        }
+      ],
+      "groups": null,
+      "query_text": null,
+      "execution_target": "history",
+      "date": null,
+      "start_time": null,
+      "end_time": null,
+      "sort_by": null,
+      "sort_order": "desc",
+      "page": 1,
+      "page_size": 200,
+      "query_name": null,
+      "query_id": null
+    },
+    "is_public": false,
+    "sorting": null,
+    "page_size": null,
+    "selected_columns": null,
+    "ui_state": {},
+    "id": "f892c850-2afa-4ad3-9cc4-8f31f20e34d0",
+    "usage_count": 0,
+    "favorite": false,
+    "created_at": "2026-07-28T01:40:32.199508Z",
+    "updated_at": "2026-07-28T01:40:32.214228+00:00",
+    "last_used": null,
+    "is_deleted": true
+  },
+  {
+    "name": "Regression Test Preset (Updated)",
+    "description": "Testing save",
+    "scanner_type": "any",
+    "version": 2,
+    "request": {
+      "conditions": [
+        {
+          "column": "Volume",
+          "operator": ">",
+          "value": 50000,
+          "logical": "AND"
+        }
+      ],
+      "groups": null,
+      "query_text": null,
+      "execution_target": "history",
+      "date": null,
+      "start_time": null,
+      "end_time": null,
+      "sort_by": null,
+      "sort_order": "desc",
+      "page": 1,
+      "page_size": 200,
+      "query_name": null,
+      "query_id": null
+    },
+    "is_public": false,
+    "sorting": null,
+    "page_size": null,
+    "selected_columns": null,
+    "ui_state": {},
+    "id": "3ea27db0-7475-44a5-b699-02a95975530f",
+    "usage_count": 0,
+    "favorite": false,
+    "created_at": "2026-07-28T01:43:28.185617Z",
+    "updated_at": "2026-07-28T01:43:28.197431+00:00",
+    "last_used": null,
+    "is_deleted": true
+  },
+  {
+    "name": "test",
+    "description": "",
+    "scanner_type": "historical",
+    "version": 2,
+    "request": {
+      "conditions": null,
+      "groups": null,
+      "query_text": "High < 100",
+      "execution_target": "history",
+      "date": "2026-07-27",
+      "start_time": null,
+      "end_time": null,
+      "sort_by": null,
+      "sort_order": "desc",
+      "page": 1,
+      "page_size": 5000,
+      "query_name": null,
+      "query_id": null
+    },
+    "is_public": false,
+    "sorting": [
+      {
+        "id": "day_change_pct",
+        "desc": true
+      }
+    ],
+    "page_size": 1000,
+    "selected_columns": [
+      "Instrument",
+      "Open",
+      "High",
+      "Low",
+      "Close",
+      "Last Price",
+      "Volume",
+      "Average Price",
+      "Net Change",
+      "Total Buy Quantity",
+      "Total Sell Quantity",
+      "trading_symbol",
+      "day_change_pct",
+      "Fetch Timestamp"
+    ],
+    "ui_state": {},
+    "id": "aa2aa63c-dda0-478c-b029-0d4d0d77c37d",
+    "usage_count": 13,
+    "favorite": false,
+    "created_at": "2026-07-28T01:53:47.221025Z",
+    "updated_at": "2026-07-28T03:28:30.700271+00:00",
+    "last_used": "2026-07-28T03:26:59.816297Z",
+    "is_deleted": true
+  },
+  {
+    "name": "test1",
+    "description": "",
+    "scanner_type": "historical",
+    "version": 2,
+    "request": {
+      "conditions": null,
+      "groups": null,
+      "query_text": "High < 100  AND Open<100",
+      "execution_target": "history",
+      "date": "2026-07-27",
+      "start_time": null,
+      "end_time": null,
+      "sort_by": null,
+      "sort_order": "desc",
+      "page": 1,
+      "page_size": 5000,
+      "query_name": null,
+      "query_id": null
+    },
+    "is_public": false,
+    "sorting": [
+      {
+        "id": "day_change_pct",
+        "desc": true
+      }
+    ],
+    "page_size": 1000,
+    "selected_columns": [
+      "Instrument",
+      "Open",
+      "High",
+      "Low",
+      "Close",
+      "Last Price",
+      "Volume",
+      "Average Price",
+      "Net Change",
+      "Total Buy Quantity",
+      "Total Sell Quantity",
+      "trading_symbol",
+      "day_change_pct",
+      "Fetch Timestamp"
+    ],
+    "ui_state": {},
+    "id": "1fda2298-a6f5-4ee1-b820-eea606aa4238",
+    "usage_count": 6,
+    "favorite": false,
+    "created_at": "2026-07-28T02:50:48.325141Z",
+    "updated_at": "2026-07-28T02:50:48.325141Z",
+    "last_used": "2026-07-28T06:48:03.547092Z",
+    "is_deleted": false
+  }
+]
