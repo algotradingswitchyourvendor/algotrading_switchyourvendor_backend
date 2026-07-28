@@ -163,6 +163,7 @@ def create_app() -> FastAPI:
     from app.api.metadata import router as metadata_router
     from app.api.market_status import router as market_status_router
     from app.api.health import router as health_router
+    from app.api.presets import router as presets_router
 
     api_prefix = "/api/v1"
     app.include_router(dashboard_router, prefix=api_prefix, tags=["Dashboard"])
@@ -172,6 +173,7 @@ def create_app() -> FastAPI:
     app.include_router(metadata_router, prefix=api_prefix, tags=["Metadata"])
     app.include_router(market_status_router, prefix=api_prefix, tags=["Market Status"])
     app.include_router(health_router, prefix=api_prefix, tags=["Health"])
+    app.include_router(presets_router, prefix=api_prefix, tags=["Presets"])
 
     # ── WebSocket Endpoint ──────────────────────────────────────────────
     from app.websocket.connection_manager import manager
