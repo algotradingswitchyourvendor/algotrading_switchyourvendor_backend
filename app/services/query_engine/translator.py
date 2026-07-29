@@ -15,6 +15,7 @@ Security: No eval(). All operations are explicit Pandas vectorized calls.
 """
 
 import logging
+import numpy as np
 from typing import Any
 
 import pandas as pd
@@ -44,6 +45,29 @@ def apply_conditions(
     or_masks: list[pd.Series] = []
 
     for condition in conditions:
+        if condition.get("type") == "expression" and "ast" in condition:
+            try:
+                mask = _evaluate_ast(df, condition["ast"])
+                # Fallback in case of unexpected types returning Series
+                if not isinstance(mask, pd.Series):
+                    mask = pd.Series(mask, index=df.index)
+                
+                logical = condition.get("logical", "AND").upper()
+                if logical == "OR":
+                    or_masks.append(mask)
+                else:
+                    and_mask = and_mask & mask
+            except Exception as e:
+                logger.warning(f"Translator: AST evaluation failed: {e}")
+                # Fail-safe: if evaluation crashes, default to False to prevent false-positives
+                mask = pd.Series(False, index=df.index)
+                logical = condition.get("logical", "AND").upper()
+                if logical == "OR":
+                    or_masks.append(mask)
+                else:
+                    and_mask = and_mask & mask
+            continue
+
         column = condition.get("column", "")
         operator = condition.get("operator", "=")
         value = condition.get("value")
@@ -154,3 +178,96 @@ def _evaluate_single(
 
     # Default: include all rows (graceful degradation)
     return pd.Series(True, index=df.index)
+
+
+def _evaluate_ast(df: pd.DataFrame, ast: dict) -> pd.Series | Any:
+    """
+    Recursively evaluate an AST dict into a Pandas Series mask or value.
+    Uses strict vectorized operations (no eval()).
+    """
+    node_type = ast.get("type")
+    
+    if node_type == "Identifier":
+        name = ast["name"]
+        if name not in df.columns:
+            raise ValueError(f"Unknown column: {name}")
+        # Return the strictly-typed Pandas series
+        return df[name]
+        
+    elif node_type == "Literal":
+        return ast["value"]
+        
+    elif node_type == "UnaryExpression":
+        right = _evaluate_ast(df, ast["right"])
+        op = ast["operator"]
+        if op == "NOT": return ~right
+        if op == "-": return -right
+        if op == "+": return +right
+        raise ValueError(f"Unsupported unary operator: {op}")
+        
+    elif node_type in ("BinaryExpression", "LogicalExpression"):
+        left = _evaluate_ast(df, ast["left"])
+        right = _evaluate_ast(df, ast["right"])
+        op = ast["operator"]
+        
+        # Comparisons
+        if op == ">": return left > right
+        if op == "<": return left < right
+        if op == ">=": return left >= right
+        if op == "<=": return left <= right
+        if op in ("=", "=="): return left == right
+        if op == "!=": return left != right
+        
+        # Math
+        if op == "+": return left + right
+        if op == "-": return left - right
+        if op == "*": return left * right
+        if op == "/": return left / right
+        if op == "%": return left % right
+        
+        # Logical
+        if op == "AND": return left & right
+        if op == "OR": return left | right
+        
+        raise ValueError(f"Unsupported operator: {op}")
+        
+    elif node_type == "CallExpression":
+        callee = ast["callee"]["name"].upper()
+        args = [_evaluate_ast(df, arg) for arg in ast.get("arguments", [])]
+        
+        if not args:
+            raise ValueError(f"Function {callee} requires arguments")
+            
+        # Math functions via Numpy (perfectly vectorized over Pandas Series)
+        if callee == "LOG":
+            # DuckDB SQL translates LOG to Natural Log (LN). Handle <= 0 gracefully.
+            if isinstance(args[0], pd.Series):
+                return np.log(args[0].where(args[0] > 0))
+            return np.log(args[0]) if args[0] > 0 else np.nan
+            
+        elif callee == "SQRT":
+            # Handle < 0 gracefully
+            if isinstance(args[0], pd.Series):
+                return np.sqrt(args[0].where(args[0] >= 0))
+            return np.sqrt(args[0]) if args[0] >= 0 else np.nan
+            
+        elif callee == "ABS": return np.abs(args[0])
+        elif callee == "ROUND":
+            if len(args) > 1: return np.round(args[0], decimals=args[1])
+            return np.round(args[0])
+        elif callee == "CEIL": return np.ceil(args[0])
+        elif callee == "FLOOR": return np.floor(args[0])
+        elif callee == "MIN":
+            res = args[0]
+            for a in args[1:]:
+                res = np.minimum(res, a)
+            return res
+        elif callee == "MAX":
+            res = args[0]
+            for a in args[1:]:
+                res = np.maximum(res, a)
+            return res
+        else:
+            raise ValueError(f"Unsupported function: {callee}")
+            
+    raise ValueError(f"Unsupported AST node type: {node_type}")
