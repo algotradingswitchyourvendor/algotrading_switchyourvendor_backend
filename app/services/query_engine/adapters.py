@@ -30,6 +30,7 @@ class AdapterResult:
     timings: Optional[Dict[str, float]] = None
     bullish_count: Optional[int] = None
     bearish_count: Optional[int] = None
+    available_columns: Optional[list[str]] = None
 
 class BaseAdapter(ABC):
     """Provides the current live market snapshot as a DataFrame."""

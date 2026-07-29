@@ -251,35 +251,43 @@ class HistoryService:
                     
                     # Get total matched for pagination metadata
                     t_count = time.perf_counter()
-                    if sql_where == "1=1":
-                        total_matched = total_scanned
-                        count_query_where = ""
-                    else:
-                        count_query = f"SELECT COUNT(*) FROM {table_ref} WHERE {sql_where}"
-                        total_matched = conn.execute(count_query).fetchone()[0]
-                        count_query_where = f"WHERE {sql_where} AND"
+                    try:
+                        if sql_where == "1=1":
+                            total_matched = total_scanned
+                            count_query_where = ""
+                        else:
+                            count_query = f"SELECT COUNT(*) FROM {table_ref} WHERE {sql_where}"
+                            total_matched = conn.execute(count_query).fetchone()[0]
+                            count_query_where = f"WHERE {sql_where} AND"
+                        
+                        bullish_count = conn.execute(f"SELECT COUNT(*) FROM {table_ref} {count_query_where if sql_where != '1=1' else 'WHERE'} day_change_pct > 0").fetchone()[0]
+                        bearish_count = conn.execute(f"SELECT COUNT(*) FROM {table_ref} {count_query_where if sql_where != '1=1' else 'WHERE'} day_change_pct < 0").fetchone()[0]
+                        timings["COUNT Query"] = (time.perf_counter() - t_count) * 1000
+                        
+                        # Fetch paginated dataframe (DuckDB Query + Materialization)
+                        t_exec = time.perf_counter()
+                        where_clause = "" if sql_where == "1=1" else f"WHERE {sql_where}"
+                        data_query = f"SELECT * FROM {table_ref} {where_clause} {order_by} LIMIT {page_size} OFFSET {offset}"
+                        rel = conn.execute(data_query)
+                        timings["DuckDB Query"] = (time.perf_counter() - t_exec) * 1000
+                        
+                        t_mat = time.perf_counter()
+                        # Bypasses Pandas 3.0 pyarrow timezone conversion crash
+                        df = rel.arrow().read_all().to_pandas(types_mapper=pd.ArrowDtype)
+                        timings["Materialization"] = (time.perf_counter() - t_mat) * 1000
+                        available_columns = df.columns.tolist()
+                    except duckdb.BinderException:
+                        # Validation failed (e.g., missing column). Let the engine handle the validation errors.
+                        # We return an empty dataframe but provide the schema columns so engine can validate.
+                        schema_df = conn.execute(f"SELECT * FROM {table_ref} LIMIT 0").df()
+                        available_columns = schema_df.columns.tolist()
+                        return total_scanned, 0, 0, 0, pd.DataFrame(), timings, available_columns
                     
-                    bullish_count = conn.execute(f"SELECT COUNT(*) FROM {table_ref} {count_query_where if sql_where != '1=1' else 'WHERE'} day_change_pct > 0").fetchone()[0]
-                    bearish_count = conn.execute(f"SELECT COUNT(*) FROM {table_ref} {count_query_where if sql_where != '1=1' else 'WHERE'} day_change_pct < 0").fetchone()[0]
-                    timings["COUNT Query"] = (time.perf_counter() - t_count) * 1000
-                    
-                    # Fetch paginated dataframe (DuckDB Query + Materialization)
-                    t_exec = time.perf_counter()
-                    where_clause = "" if sql_where == "1=1" else f"WHERE {sql_where}"
-                    data_query = f"SELECT * FROM {table_ref} {where_clause} {order_by} LIMIT {page_size} OFFSET {offset}"
-                    rel = conn.execute(data_query)
-                    timings["DuckDB Query"] = (time.perf_counter() - t_exec) * 1000
-                    
-                    t_mat = time.perf_counter()
-                    # Bypasses Pandas 3.0 pyarrow timezone conversion crash
-                    df = rel.arrow().read_all().to_pandas(types_mapper=pd.ArrowDtype)
-                    timings["Materialization"] = (time.perf_counter() - t_mat) * 1000
-                    
-                    return total_scanned, total_matched, bullish_count, bearish_count, df, timings
+                    return total_scanned, total_matched, bullish_count, bearish_count, df, timings, available_columns
                 finally:
                     conn.close()
                     
-            total_scanned, total_matched, bullish_count, bearish_count, df, timings = await asyncio.to_thread(_execute_duckdb)
+            total_scanned, total_matched, bullish_count, bearish_count, df, timings, available_columns = await asyncio.to_thread(_execute_duckdb)
             
             # Inject translation time
             timings["SQL Translation"] = t_sql_trans
@@ -293,7 +301,8 @@ class HistoryService:
                 total_scanned=total_scanned,
                 timings=timings,
                 bullish_count=bullish_count,
-                bearish_count=bearish_count
+                bearish_count=bearish_count,
+                available_columns=available_columns
             )
             
         except Exception as e:

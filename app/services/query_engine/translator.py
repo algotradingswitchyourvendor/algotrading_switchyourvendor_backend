@@ -40,6 +40,15 @@ def apply_conditions(
     if not conditions or df.empty:
         return df
 
+    # If any condition is an expression (from query_text AST), delegate to DuckDB
+    if any(c.get("type") == "expression" for c in conditions):
+        import duckdb
+        from app.services.query_engine.sql_translator import translate_conditions
+        sql_where = translate_conditions(conditions)
+        if sql_where == "1=1":
+            return df
+        return duckdb.query(f"SELECT * FROM df WHERE {sql_where}").df()
+
     and_mask = pd.Series(True, index=df.index)
     or_masks: list[pd.Series] = []
 
