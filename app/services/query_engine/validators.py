@@ -65,33 +65,6 @@ def validate_conditions(
         return errors
 
     for i, cond in enumerate(conditions):
-        if cond.get("type") == "expression" and "ast" in cond:
-            # Recursively extract identifiers from the AST
-            def _extract_identifiers(node):
-                idents = []
-                if not isinstance(node, dict):
-                    return idents
-                if node.get("type") == "Identifier":
-                    idents.append(node.get("name"))
-                for key, val in node.items():
-                    if isinstance(val, dict):
-                        idents.extend(_extract_identifiers(val))
-                    elif isinstance(val, list):
-                        for item in val:
-                            idents.extend(_extract_identifiers(item))
-                return idents
-            
-            for ident in _extract_identifiers(cond["ast"]):
-                if ident and ident not in available_columns:
-                    suggestion = _find_closest(ident, available_columns)
-                    errors.append(QueryValidationError(
-                        field=f"conditions[{i}].ast",
-                        code="UNKNOWN_COLUMN",
-                        message=f"Unknown column: '{ident}'",
-                        suggestion=f"Did you mean '{suggestion}'?" if suggestion else None,
-                    ))
-            continue
-            
         column = cond.get("column", "")
         operator = cond.get("operator", "")
         value = cond.get("value")
