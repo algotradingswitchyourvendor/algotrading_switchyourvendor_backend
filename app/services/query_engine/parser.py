@@ -350,7 +350,18 @@ class _Parser:
         )
 
 
-# ── Public API ───────────────────────────────────────────────────────────
+def _is_expression_query(query: str) -> bool:
+    """
+    Detects if a query uses expression features.
+    We now route ALL comparison queries (e.g. High > Low, High > 100) to the expression engine
+    since it properly handles RHS identifiers. The ONLY true legacy queries that must bypass
+    the expression engine are those using BETWEEN or CONTAINS.
+    """
+    upper_q = query.upper()
+    if "BETWEEN" in upper_q or "CONTAINS" in upper_q:
+        return False
+    return True
+
 
 def parse_query_text(query_text: str) -> list[dict]:
     """
@@ -361,13 +372,33 @@ def parse_query_text(query_text: str) -> list[dict]:
 
     Returns:
         List of dicts: [{"column": "Volume", "operator": ">", "value": 500000, "logical": "AND"}, ...]
+        Or Expression wrapper: [{"type": "expression", "ast": ...}]
 
     Raises:
         ParseError: If the query cannot be parsed
     """
     if not query_text or not query_text.strip():
         raise ParseError("Empty query")
+        
+    clean_query = query_text.strip()
+    
+    # 1. Early routing: Prevent legacy tokenizer from warning on math characters
+    if _is_expression_query(clean_query):
+        from app.services.query_engine.expression_parser import parse_expression
+        return parse_expression(clean_query)
 
-    tokens = _tokenize(query_text.strip())
-    parser = _Parser(tokens)
-    return parser.parse()
+    # 2. True legacy query
+    try:
+        tokens = _tokenize(clean_query)
+        parser = _Parser(tokens)
+        return parser.parse()
+    except ParseError as e:
+        # Fallback to the new robust Expression AST parser in case the heuristic missed something
+        # (e.g. deeply nested parens that fail legacy parsing)
+        try:
+            from app.services.query_engine.expression_parser import parse_expression
+            return parse_expression(clean_query)
+        except Exception as fallback_error:
+            # If the expression parser also fails, raise the original error 
+            # to preserve legacy test structures and error expectations
+            raise ParseError(f"Failed to parse query: {fallback_error} (Legacy error: {e})")
