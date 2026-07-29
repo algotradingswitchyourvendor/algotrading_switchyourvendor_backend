@@ -244,11 +244,11 @@
     ],
     "ui_state": {},
     "id": "29d0ec23-65e2-407c-9e89-d91d1f21dd69",
-    "usage_count": 19,
+    "usage_count": 11,
     "favorite": false,
     "created_at": "2026-07-28T08:39:56.665995Z",
     "updated_at": "2026-07-28T09:08:34.289733Z",
-    "last_used": "2026-07-29T08:11:38.252589Z",
+    "last_used": "2026-07-28T09:09:10.057788Z",
     "is_deleted": false
   },
   {
@@ -310,11 +310,11 @@
     ],
     "ui_state": {},
     "id": "e82976d3-3896-4941-8385-0e06664f10b8",
-    "usage_count": 14,
+    "usage_count": 13,
     "favorite": false,
     "created_at": "2026-07-28T08:41:05.943880Z",
     "updated_at": "2026-07-28T08:41:05.943880Z",
-    "last_used": "2026-07-29T08:11:44.936444Z",
+    "last_used": "2026-07-28T23:50:07.780371Z",
     "is_deleted": false
   },
   {
@@ -382,11 +382,11 @@
     ],
     "ui_state": {},
     "id": "bc7ac276-94b6-411e-af29-4a7cde81bf14",
-    "usage_count": 12,
+    "usage_count": 11,
     "favorite": false,
     "created_at": "2026-07-28T08:46:04.328606Z",
     "updated_at": "2026-07-28T08:46:04.328606Z",
-    "last_used": "2026-07-29T08:11:49.142642Z",
+    "last_used": "2026-07-28T23:49:36.440747Z",
     "is_deleted": false
   },
   {
@@ -435,11 +435,11 @@
     ],
     "ui_state": {},
     "id": "1da59c0a-34ae-470a-83b6-385ef8b33858",
-    "usage_count": 5,
+    "usage_count": 3,
     "favorite": false,
     "created_at": "2026-07-28T23:12:40.441534Z",
     "updated_at": "2026-07-28T23:12:40.441534Z",
-    "last_used": "2026-07-29T05:09:51.765832Z",
+    "last_used": "2026-07-28T23:13:42.047664Z",
     "is_deleted": false
   },
   {
@@ -541,11 +541,11 @@
     ],
     "ui_state": {},
     "id": "750ef39a-32a7-4424-857d-7ac21101133c",
-    "usage_count": 2,
+    "usage_count": 1,
     "favorite": false,
     "created_at": "2026-07-28T23:16:06.824047Z",
     "updated_at": "2026-07-28T23:16:06.824047Z",
-    "last_used": "2026-07-29T08:27:59.724830Z",
+    "last_used": "2026-07-28T23:16:20.363735Z",
     "is_deleted": false
   },
   {
@@ -594,16 +594,16 @@
     ],
     "ui_state": {},
     "id": "d528d1b0-4675-450e-9406-f899412d0694",
-    "usage_count": 3,
+    "usage_count": 0,
     "favorite": false,
     "created_at": "2026-07-28T23:17:39.599857Z",
     "updated_at": "2026-07-28T23:17:39.599857Z",
-    "last_used": "2026-07-29T08:27:47.062552Z",
+    "last_used": null,
     "is_deleted": false
   },
   {
     "name": "Monster Query",
-    "description": "nn",
+    "description": "",
     "scanner_type": "historical",
     "version": 2,
     "request": {
@@ -647,331 +647,11 @@
     ],
     "ui_state": {},
     "id": "fdee5f9b-e7b0-475f-8d1d-30f7cc8f25b0",
-    "usage_count": 13,
+    "usage_count": 3,
     "favorite": false,
     "created_at": "2026-07-28T23:19:15.513039Z",
-    "updated_at": "2026-07-29T06:12:25.518017Z",
-    "last_used": "2026-07-29T08:28:12.398283Z",
+    "updated_at": "2026-07-28T23:19:15.513039Z",
+    "last_used": "2026-07-29T00:35:59.662096Z",
     "is_deleted": false
-  },
-  {
-    "name": "Regression Test Preset (Updated)",
-    "description": "Testing save",
-    "scanner_type": "any",
-    "version": 2,
-    "request": {
-      "conditions": [
-        {
-          "column": "Volume",
-          "operator": ">",
-          "value": 50000,
-          "logical": "AND"
-        }
-      ],
-      "groups": null,
-      "query_text": null,
-      "execution_target": "history",
-      "date": null,
-      "start_time": null,
-      "end_time": null,
-      "sort_by": null,
-      "sort_order": "desc",
-      "page": 1,
-      "page_size": 200,
-      "query_name": null,
-      "query_id": null
-    },
-    "is_public": false,
-    "sorting": null,
-    "page_size": null,
-    "selected_columns": null,
-    "ui_state": {},
-    "id": "2baa343d-d9b8-4fc6-83b8-3f9a3272d48d",
-    "usage_count": 0,
-    "favorite": false,
-    "created_at": "2026-07-29T05:01:09.727036Z",
-    "updated_at": "2026-07-29T05:01:09.790384+00:00",
-    "last_used": null,
-    "is_deleted": true
-  },
-  {
-    "name": "Regression Test Preset (Updated)",
-    "description": "Testing save",
-    "scanner_type": "any",
-    "version": 2,
-    "request": {
-      "conditions": [
-        {
-          "column": "Volume",
-          "operator": ">",
-          "value": 50000,
-          "logical": "AND"
-        }
-      ],
-      "groups": null,
-      "query_text": null,
-      "execution_target": "history",
-      "date": null,
-      "start_time": null,
-      "end_time": null,
-      "sort_by": null,
-      "sort_order": "desc",
-      "page": 1,
-      "page_size": 200,
-      "query_name": null,
-      "query_id": null
-    },
-    "is_public": false,
-    "sorting": null,
-    "page_size": null,
-    "selected_columns": null,
-    "ui_state": {},
-    "id": "c8e1e8c4-9eb6-487c-898e-ed1e79279e87",
-    "usage_count": 0,
-    "favorite": false,
-    "created_at": "2026-07-29T05:02:35.928229Z",
-    "updated_at": "2026-07-29T05:02:35.998342+00:00",
-    "last_used": null,
-    "is_deleted": true
-  },
-  {
-    "name": "Regression Test Preset (Updated)",
-    "description": "Testing save",
-    "scanner_type": "any",
-    "version": 2,
-    "request": {
-      "conditions": [
-        {
-          "column": "Volume",
-          "operator": ">",
-          "value": 50000,
-          "logical": "AND"
-        }
-      ],
-      "groups": null,
-      "query_text": null,
-      "execution_target": "history",
-      "date": null,
-      "start_time": null,
-      "end_time": null,
-      "sort_by": null,
-      "sort_order": "desc",
-      "page": 1,
-      "page_size": 200,
-      "query_name": null,
-      "query_id": null
-    },
-    "is_public": false,
-    "sorting": null,
-    "page_size": null,
-    "selected_columns": null,
-    "ui_state": {},
-    "id": "41556667-9c1a-4a80-8486-2885d0298daa",
-    "usage_count": 0,
-    "favorite": false,
-    "created_at": "2026-07-29T05:44:23.132045Z",
-    "updated_at": "2026-07-29T05:44:23.184483+00:00",
-    "last_used": null,
-    "is_deleted": true
-  },
-  {
-    "name": "Regression Test Preset (Updated)",
-    "description": "Testing save",
-    "scanner_type": "any",
-    "version": 2,
-    "request": {
-      "conditions": [
-        {
-          "column": "Volume",
-          "operator": ">",
-          "value": 50000,
-          "logical": "AND"
-        }
-      ],
-      "groups": null,
-      "query_text": null,
-      "execution_target": "history",
-      "date": null,
-      "start_time": null,
-      "end_time": null,
-      "sort_by": null,
-      "sort_order": "desc",
-      "page": 1,
-      "page_size": 200,
-      "query_name": null,
-      "query_id": null
-    },
-    "is_public": false,
-    "sorting": null,
-    "page_size": null,
-    "selected_columns": null,
-    "ui_state": {},
-    "id": "09a41f31-1a07-4644-beaf-dd9e6e2df9e1",
-    "usage_count": 0,
-    "favorite": false,
-    "created_at": "2026-07-29T05:49:26.495670Z",
-    "updated_at": "2026-07-29T05:49:26.535314+00:00",
-    "last_used": null,
-    "is_deleted": true
-  },
-  {
-    "name": "Regression Test Preset (Updated)",
-    "description": "Testing save",
-    "scanner_type": "any",
-    "version": 2,
-    "request": {
-      "conditions": [
-        {
-          "column": "Volume",
-          "operator": ">",
-          "value": 50000,
-          "logical": "AND"
-        }
-      ],
-      "groups": null,
-      "query_text": null,
-      "execution_target": "history",
-      "date": null,
-      "start_time": null,
-      "end_time": null,
-      "sort_by": null,
-      "sort_order": "desc",
-      "page": 1,
-      "page_size": 200,
-      "query_name": null,
-      "query_id": null
-    },
-    "is_public": false,
-    "sorting": null,
-    "page_size": null,
-    "selected_columns": null,
-    "ui_state": {},
-    "id": "a50d4fc2-fbeb-4999-a263-14558fd4f35d",
-    "usage_count": 0,
-    "favorite": false,
-    "created_at": "2026-07-29T05:55:17.631957Z",
-    "updated_at": "2026-07-29T05:55:18.050894+00:00",
-    "last_used": null,
-    "is_deleted": true
-  },
-  {
-    "name": "Regression Test Preset (Updated)",
-    "description": "Testing save",
-    "scanner_type": "any",
-    "version": 2,
-    "request": {
-      "conditions": [
-        {
-          "column": "Volume",
-          "operator": ">",
-          "value": 50000,
-          "logical": "AND"
-        }
-      ],
-      "groups": null,
-      "query_text": null,
-      "execution_target": "history",
-      "date": null,
-      "start_time": null,
-      "end_time": null,
-      "sort_by": null,
-      "sort_order": "desc",
-      "page": 1,
-      "page_size": 200,
-      "query_name": null,
-      "query_id": null
-    },
-    "is_public": false,
-    "sorting": null,
-    "page_size": null,
-    "selected_columns": null,
-    "ui_state": {},
-    "id": "d6bb7a58-1bfa-4816-b2c0-6f45c0425477",
-    "usage_count": 0,
-    "favorite": false,
-    "created_at": "2026-07-29T06:00:18.056567Z",
-    "updated_at": "2026-07-29T06:00:18.559808+00:00",
-    "last_used": null,
-    "is_deleted": true
-  },
-  {
-    "name": "Regression Test Preset (Updated)",
-    "description": "Testing save",
-    "scanner_type": "any",
-    "version": 2,
-    "request": {
-      "conditions": [
-        {
-          "column": "Volume",
-          "operator": ">",
-          "value": 50000,
-          "logical": "AND"
-        }
-      ],
-      "groups": null,
-      "query_text": null,
-      "execution_target": "history",
-      "date": null,
-      "start_time": null,
-      "end_time": null,
-      "sort_by": null,
-      "sort_order": "desc",
-      "page": 1,
-      "page_size": 200,
-      "query_name": null,
-      "query_id": null
-    },
-    "is_public": false,
-    "sorting": null,
-    "page_size": null,
-    "selected_columns": null,
-    "ui_state": {},
-    "id": "4f57d4bd-b983-4872-a0a5-a5461d52324e",
-    "usage_count": 0,
-    "favorite": false,
-    "created_at": "2026-07-29T08:02:08.121214Z",
-    "updated_at": "2026-07-29T08:02:08.161035+00:00",
-    "last_used": null,
-    "is_deleted": true
-  },
-  {
-    "name": "Regression Test Preset (Updated)",
-    "description": "Testing save",
-    "scanner_type": "any",
-    "version": 2,
-    "request": {
-      "conditions": [
-        {
-          "column": "Volume",
-          "operator": ">",
-          "value": 50000,
-          "logical": "AND"
-        }
-      ],
-      "groups": null,
-      "query_text": null,
-      "execution_target": "history",
-      "date": null,
-      "start_time": null,
-      "end_time": null,
-      "sort_by": null,
-      "sort_order": "desc",
-      "page": 1,
-      "page_size": 200,
-      "query_name": null,
-      "query_id": null
-    },
-    "is_public": false,
-    "sorting": null,
-    "page_size": null,
-    "selected_columns": null,
-    "ui_state": {},
-    "id": "3190c6e2-f332-4f69-b000-28600facd928",
-    "usage_count": 0,
-    "favorite": false,
-    "created_at": "2026-07-29T08:05:37.412516Z",
-    "updated_at": "2026-07-29T08:05:37.442509+00:00",
-    "last_used": null,
-    "is_deleted": true
   }
 ]
