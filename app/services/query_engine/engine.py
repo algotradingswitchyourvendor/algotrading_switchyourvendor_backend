@@ -72,13 +72,18 @@ def execute_query(
         is_pre_processed = adapter_result.is_pre_processed
         matched_count = adapter_result.matched_count
         total_scanned = adapter_result.total_scanned or len(df)
+        available_columns = adapter_result.available_columns
     else:
         df = adapter_result
         is_pre_processed = False
         matched_count = None
         total_scanned = len(df)
+        available_columns = None
 
-    if df.empty and not is_pre_processed:
+    if available_columns is None:
+        available_columns = df.columns.tolist()
+
+    if df.empty and not is_pre_processed and not available_columns:
         return [], _build_meta(
             total=0,
             total_scanned=0,
@@ -90,8 +95,8 @@ def execute_query(
         )
 
     # ── Step 3: Validate conditions ─────────────────────────────────
-    available_columns = set(df.columns)
-    validation_errors = validate_conditions(conditions, available_columns)
+    available_columns_set = set(available_columns)
+    validation_errors = validate_conditions(conditions, available_columns_set)
 
     # Filter out fatal errors (unknown columns, etc.) but continue with warnings
     fatal_errors = [e for e in validation_errors if e.code in ("UNKNOWN_COLUMN", "EMPTY_CONDITIONS")]
