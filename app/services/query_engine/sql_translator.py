@@ -14,15 +14,19 @@ def translate_conditions(conditions: list[dict]) -> str:
     where_parts = []
     
     for i, condition in enumerate(conditions):
-        column = condition.get("column", "")
-        operator = condition.get("operator", "=")
-        value = condition.get("value")
-        logical = condition.get("logical", "AND").upper()
-        
-        if not column:
-            continue
+        if condition.get("type") == "expression":
+            sql_part = translate_ast_to_sql(condition["ast"])
+            logical = "AND"
+        else:
+            column = condition.get("column", "")
+            operator = condition.get("operator", "=")
+            value = condition.get("value")
+            logical = condition.get("logical", "AND").upper()
             
-        sql_part = _evaluate_single(column, operator, value)
+            if not column:
+                continue
+                
+            sql_part = _evaluate_single(column, operator, value)
         
         if sql_part:
             if i == 0:
@@ -97,3 +101,61 @@ def _evaluate_single(column: str, operator: str, value: Any) -> str:
         
     logger.warning(f"SQL Translator: unknown operator '{operator}'")
     return ""
+
+
+def translate_ast_to_sql(ast: dict) -> str:
+    """Recursively walks an AST dict and emits DuckDB SQL."""
+    node_type = ast.get("type")
+    
+    if node_type == "LogicalExpression":
+        left = translate_ast_to_sql(ast["left"])
+        right = translate_ast_to_sql(ast["right"])
+        op = ast["operator"]
+        return f"({left} {op} {right})"
+        
+    elif node_type == "BinaryExpression":
+        left = translate_ast_to_sql(ast["left"])
+        right = translate_ast_to_sql(ast["right"])
+        op = ast["operator"]
+        if op == "==":
+            op = "="
+        return f"({left} {op} {right})"
+        
+    elif node_type == "UnaryExpression":
+        op = ast["operator"]
+        right = translate_ast_to_sql(ast["right"])
+        if op == "NOT":
+            return f"(NOT {right})"
+        return f"({op}{right})"
+        
+    elif node_type == "CallExpression":
+        callee = ast["callee"]["name"].upper()
+        args = [translate_ast_to_sql(arg) for arg in ast["arguments"]]
+        
+        # Explicit DuckDB Math Mappings
+        if callee == "MAX":
+            callee = "GREATEST"
+        elif callee == "MIN":
+            callee = "LEAST"
+            
+        args_str = ", ".join(args)
+        
+        if callee == "LOG":
+            # Graceful handling for logarithm of zero or negative numbers
+            arg = args[0] if args else "1"
+            return f"(CASE WHEN {arg} <= 0 THEN NULL ELSE LN({arg}) END)"
+            
+        return f"{callee}({args_str})"
+        
+    elif node_type == "Identifier":
+        name = ast["name"]
+        return f'"{name}"'
+        
+    elif node_type == "Literal":
+        val = ast["value"]
+        if isinstance(val, (int, float)):
+            return str(val)
+        safe_str = str(val).replace("'", "''")
+        return f"'{safe_str}'"
+        
+    raise ValueError(f"Unknown AST node type: {node_type}")
