@@ -73,6 +73,11 @@ def validate_conditions(
                     return idents
                 if node.get("type") == "Identifier":
                     idents.append(node.get("name"))
+                elif node.get("type") == "CallExpression":
+                    for arg in node.get("arguments", []):
+                        idents.extend(_extract_identifiers(arg))
+                    return idents
+                
                 for key, val in node.items():
                     if isinstance(val, dict):
                         idents.extend(_extract_identifiers(val))
