@@ -28,6 +28,8 @@ async def get_history(
     date: Optional[str] = Query("today", description="Date (YYYY-MM-DD) or 'today'"),
     start_time: Optional[str] = Query(None, description="Start time (HH:MM)"),
     end_time: Optional[str] = Query(None, description="End time (HH:MM)"),
+    sort_by: Optional[str] = Query(None, description="Column to sort by"),
+    sort_order: Optional[str] = Query("asc", description="Sort order (asc/desc)"),
     page: int = Query(1, ge=1),
     page_size: int = Query(100, ge=1, le=1000),
 ):
@@ -43,6 +45,8 @@ async def get_history(
             target_date=date,
             start_time=start_time,
             end_time=end_time,
+            sort_by=sort_by,
+            sort_order=sort_order,
             page=page,
             page_size=page_size,
         )

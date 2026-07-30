@@ -43,6 +43,8 @@ async def query_scanner(request: Request, body: UnifiedQueryRequest):
         ) | {"meta": meta}
 
     except ValueError as e:
+        import traceback
+        traceback.print_exc()
         return error_response(
             code="QUERY_VALIDATION_ERROR",
             message=str(e),

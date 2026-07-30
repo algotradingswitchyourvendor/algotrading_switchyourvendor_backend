@@ -61,6 +61,9 @@ class Settings(BaseSettings):
     CACHE_CLEANUP_INTERVAL: int = 3600  # 1 hour
     DOWNLOAD_LOCK_TIMEOUT: int = 60  # seconds
     S3_CHUNK_SIZE: int = 8192  # 8KB chunks
+    S3_HEAD_TTL_SECONDS: int = 15  # TTL for S3 HEAD response cache
+    DF_CACHE_MAX_ENTRIES: int = 3  # Max parquet DataFrames kept in memory (LRU)
+    ENABLE_HISTORY_METRICS: bool = True  # Enable structured performance logging
 
     model_config = {
         "env_file": ".env",
