@@ -154,6 +154,7 @@ def execute_query(
     truncated = matched > MAX_RESULT_ROWS
 
     # ── Step 7: Convert to records ──────────────────────────────────
+    logger.info(f"DataFrame shape before serialization: {paginated.shape}")
     t_json = time.perf_counter()
     records = _df_to_records(paginated)
     t_json_time = (time.perf_counter() - t_json) * 1000
@@ -181,6 +182,7 @@ def execute_query(
     if is_pre_processed and hasattr(adapter_result, "timings") and adapter_result.timings:
         adapter_result.timings["JSON Serialization"] = t_json_time
         adapter_result.timings["Total Query Time"] = total_time
+        meta["timings"] = adapter_result.timings
         timings_str = " | ".join(f"{k}: {v:.2f}ms" for k, v in adapter_result.timings.items())
         logger.info(f"[Historical Scanner] {timings_str}")
 
@@ -264,11 +266,29 @@ def _build_meta(
 
 def _df_to_records(df: pd.DataFrame) -> list[dict]:
     """Convert DataFrame to JSON-serializable list of dicts."""
-    records = df.to_dict(orient="records")
-    for record in records:
-        for key, value in record.items():
-            if isinstance(value, pd.Timestamp):
-                record[key] = value.isoformat()
-            elif pd.isna(value):
-                record[key] = None
+    import numpy as np
+    
+    if df.empty:
+        return []
+        
+    df_copy = df.copy()
+    
+    # Precompute datetime columns for fast membership testing
+    dt_cols = set(df_copy.select_dtypes(include=['datetime64', 'datetimetz', '<M8[ns]', 'datetime64[ns, UTC]', 'datetime64[ns]']).columns)
+    
+    records = df_copy.to_dict(orient="records")
+    import math
+    for r in records:
+        for k, v in r.items():
+            if type(v) is float and math.isnan(v):
+                r[k] = None
+            elif k in dt_cols:
+                if v is None or v is pd.NaT:
+                    r[k] = None
+                else:
+                    try:
+                        r[k] = v.isoformat()
+                    except AttributeError:
+                        pass
+                
     return records

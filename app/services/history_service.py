@@ -17,6 +17,8 @@ async def get_historical_data(
     target_date: Optional[str] = None,
     start_time: Optional[str] = None,
     end_time: Optional[str] = None,
+    sort_by: Optional[str] = None,
+    sort_order: Optional[str] = "asc",
     page: int = 1,
     page_size: int = 100,
 ) -> Tuple[List[Dict], Dict]:
@@ -25,6 +27,8 @@ async def get_historical_data(
         target_date=target_date or "today",
         start_time=start_time,
         end_time=end_time,
+        sort_by=sort_by,
+        sort_order=sort_order,
         page=page,
         page_size=page_size
     )
