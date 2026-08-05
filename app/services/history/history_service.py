@@ -601,3 +601,37 @@ class HistoryService:
         except Exception as e:
             logger.error(f"Failed to list available dates: {e}")
             return []
+            # We don't need data, just the schema. Read 1 row to get full dtype/column info.
+            # Reading 1 row is extremely fast with Parquet.
+            # Using asyncio.to_thread because read_parquet is blocking I/O.
+            # dtype_backend="pyarrow" avoids Pandas 3.0 tz_standardize crashes with PyArrow PyTZ conversion
+            df = await asyncio.to_thread(pd.read_parquet, parquet_path, engine="pyarrow", dtype_backend="pyarrow")
+            return df.head(1)
+        except Exception as e:
+            logger.error(f"Failed to load schema for {target_date}: {e}")
+            return None
+
+    async def _list_dates(self) -> List[str]:
+        """List all dates that have parquet data in S3."""
+        try:
+            import boto3
+            s3_client = boto3.client("s3")
+            response = await asyncio.to_thread(
+                s3_client.list_objects_v2,
+                Bucket=self.settings.S3_BUCKET_NAME,
+                Prefix=f"{self.settings.S3_PARQUET_PREFIX}/",
+            )
+
+            dates = []
+            for obj in response.get("Contents", []):
+                key = obj["Key"]
+                filename = key.split("/")[-1]
+                if filename.endswith("_Equity.parquet"):
+                    date_str = filename.replace("_Equity.parquet", "")
+                    dates.append(date_str)
+
+            return sorted(dates, reverse=True)
+
+        except Exception as e:
+            logger.error(f"Failed to list available dates: {e}")
+            return []
