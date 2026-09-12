@@ -33,65 +33,61 @@ class CacheManager:
         self.cache_dir.mkdir(parents=True, exist_ok=True)
 
     def get_parquet_path(self, target_date: str) -> str:
-        """Returns the full path to the parquet cache file."""
-        return str(self.cache_dir / f"{target_date}_Equity.parquet")
+        """Returns the base directory path for a given date's partitions."""
+        return str(self.cache_dir / f"date={target_date}")
+
+    def get_parquet_glob(self, target_date: str) -> str:
+        """Returns the glob pattern for DuckDB to query."""
+        return str(self.cache_dir / f"date={target_date}" / "**" / "*.parquet")
+
+    def _get_date_cache_size(self, date_dir: str) -> int:
+        """Safely calculates the total size of all .parquet chunks in a date directory."""
+        total_size = 0
+        if not os.path.exists(date_dir):
+            return 0
+        try:
+            for root, _, files in os.walk(date_dir):
+                for f in files:
+                    if f.endswith('.parquet'):
+                        try:
+                            total_size += os.path.getsize(os.path.join(root, f))
+                        except OSError:
+                            pass
+        except OSError:
+            pass
+        return total_size
+
+    def _has_local_parquet(self, date_dir: str) -> bool:
+        """Returns True if at least one .parquet file exists recursively."""
+        if not os.path.exists(date_dir):
+            return False
+        for root, _, files in os.walk(date_dir):
+            if any(f.endswith('.parquet') for f in files):
+                return True
+        return False
 
     def startup_recovery(self) -> None:
         """
         Runs on backend startup. Scans cache directory.
-        Removes `.tmp` orphans, missing metadata orphans, and corrupted files.
+        Removes `.tmp` orphans anywhere in the directory tree.
         """
         logger.info("Starting CacheManager startup recovery...")
-        valid_count = 0
         deleted_count = 0
 
-        try:
-            files = os.listdir(self.cache_dir)
-        except FileNotFoundError:
+        if not os.path.exists(self.cache_dir):
             return
 
-        for filename in files:
-            file_path = str(self.cache_dir / filename)
-            
-            # 1. Clean tmp orphans from crashed downloads
-            if filename.endswith(".tmp"):
-                os.remove(file_path)
-                deleted_count += 1
-                continue
+        for root, dirs, files in os.walk(self.cache_dir):
+            for filename in files:
+                if filename.endswith(".tmp"):
+                    file_path = os.path.join(root, filename)
+                    try:
+                        os.remove(file_path)
+                        deleted_count += 1
+                    except OSError as e:
+                        logger.warning(f"Failed to remove temp file {file_path}: {e}")
 
-            # 2. Check parquet files
-            if filename.endswith(".parquet"):
-                target_date = filename.split("_")[0]
-                meta_path = self.metadata.get_meta_path(target_date)
-                
-                # Missing metadata?
-                if not os.path.exists(meta_path):
-                    logger.warning(f"Orphaned parquet found (no meta): {filename}")
-                    os.remove(file_path)
-                    deleted_count += 1
-                    continue
-                
-                # Corrupt parquet?
-                if not self.validation.verify_cache_integrity(file_path):
-                    logger.warning(f"Corrupt parquet found on startup: {filename}")
-                    os.remove(file_path)
-                    if os.path.exists(meta_path):
-                        os.remove(meta_path)
-                    deleted_count += 1
-                    continue
-                
-                valid_count += 1
-
-            # 3. Check meta files without parquets
-            elif filename.endswith(self.settings.CACHE_METADATA_FILE_EXT):
-                target_date = filename.split("_")[0]
-                parquet_path = self.get_parquet_path(target_date)
-                if not os.path.exists(parquet_path):
-                    logger.warning(f"Orphaned meta found (no parquet): {filename}")
-                    os.remove(file_path)
-                    deleted_count += 1
-
-        logger.info(f"Cache recovery complete. Valid files: {valid_count}, Deleted orphans: {deleted_count}")
+        logger.info(f"Cache recovery complete. Deleted orphans: {deleted_count}")
 
     async def cleanup_lru(self) -> None:
         """
@@ -107,15 +103,22 @@ class CacheManager:
         access_records = []
 
         for filename in files:
-            if filename.endswith(".parquet"):
-                target_date = filename.split("_")[0]
-                parquet_path = str(self.cache_dir / filename)
+            if filename.startswith("date="):
+                target_date = filename.split("=")[1]
+                date_dir = str(self.cache_dir / filename)
                 meta = self.metadata.load_metadata(target_date)
+                size = self._get_date_cache_size(date_dir)
                 
                 if not meta:
+                    if size > 0:
+                        total_bytes += size
+                        access_records.append({
+                            "target_date": target_date,
+                            "last_access": "",  # Missing metadata -> oldest priority
+                            "size": size
+                        })
                     continue
-                
-                size = meta.get("file_size_bytes", os.path.getsize(parquet_path))
+                    
                 total_bytes += size
                 access_records.append({
                     "target_date": target_date,
@@ -143,16 +146,25 @@ class CacheManager:
             try:
                 # Use a fast timeout for cleanup. If it's locked, skip it.
                 lock = await asyncio.wait_for(self.locks.acquire_lock(target_date), timeout=0.1)
-                
-                parquet_path = self.get_parquet_path(target_date)
-                if os.path.exists(parquet_path):
-                    os.remove(parquet_path)
-                self.metadata.delete_metadata(target_date)
-                
-                total_bytes -= record["size"]
-                logger.info(f"LRU Evicted: {target_date} ({record['size'] / 1024**2:.2f}MB)")
-                
-                self.locks.release_lock(target_date)
+                try:
+                    dir_path = self.get_parquet_path(target_date)
+                    success = True
+                    if os.path.exists(dir_path):
+                        import shutil
+                        try:
+                            shutil.rmtree(dir_path)
+                        except Exception as e:
+                            logger.error(f"Failed to delete {dir_path}: {e}")
+                            success = False
+                            
+                    if success:
+                        self.metadata.delete_metadata(target_date)
+                        total_bytes -= record["size"]
+                        logger.info(f"LRU Evicted: {target_date} ({record['size'] / 1024**2:.2f}MB)")
+                except Exception as e:
+                    logger.error(f"Unexpected error during LRU eviction for {target_date}: {e}")
+                finally:
+                    self.locks.release_lock(target_date)
             except asyncio.TimeoutError:
                 # File is actively being used/downloaded, skip eviction
                 continue
@@ -176,13 +188,12 @@ class CacheManager:
 
     async def _do_get_or_download(self, target_date: str) -> Optional[str]:
         """
-        The actual S3 HEAD + download pipeline. Only one instance of this
-        runs per target_date at any given time (enforced by SingleFlight).
+        The actual S3 listing + download pipeline for all missing chunks of a date.
         """
-        s3_key = f"{self.settings.S3_PARQUET_PREFIX}/{target_date}_Equity.parquet"
-        parquet_path = self.get_parquet_path(target_date)
+        prefix = f"{self.settings.S3_PARQUET_PREFIX}/date={target_date}/"
+        date_dir = self.get_parquet_path(target_date)
 
-        # Acquire per-file lock to prevent concurrent downloads of the same date
+        # Acquire per-date lock
         try:
             lock = await asyncio.wait_for(
                 self.locks.acquire_lock(target_date), 
@@ -193,53 +204,103 @@ class CacheManager:
             return None
 
         try:
-            # 1. Check local metadata
-            local_meta = self.metadata.load_metadata(target_date)
+            # 1. Ensure directory exists
+            os.makedirs(date_dir, exist_ok=True)
             
             # 2. Check S3 state
-            found, s3_meta = await asyncio.to_thread(self.downloader.head_object, s3_key)
-
-            if not found:
-                logger.warning(f"Data not available in S3 for {target_date}")
+            try:
+                s3_objects = await asyncio.to_thread(self.downloader.list_objects, prefix)
+            except Exception as e:
+                logger.error(f"S3 listing failed for {target_date}: {e}")
+                # Fall back to existing local cache if available.
+                # DO NOT perform stale-chunk cleanup.
+                if self._has_local_parquet(date_dir):
+                    logger.info(f"Using local cache fallback for {target_date}: {date_dir}")
+                    return self.get_parquet_glob(target_date)
                 return None
 
-            s3_etag = s3_meta["etag"]
+            if not s3_objects:
+                logger.warning(f"No data available in S3 for {target_date}")
+                # Fallback to local files if S3 is genuinely empty
+                if self._has_local_parquet(date_dir):
+                    logger.info(f"Using local cache fallback for {target_date}: {date_dir}")
+                    return self.get_parquet_glob(target_date)
+                return None
+
+            # Remove stale chunks locally that are no longer in S3
+            s3_keys = {obj["key"] for obj in s3_objects}
+            if os.path.exists(date_dir):
+                for root, dirs, files in os.walk(date_dir):
+                    for f in files:
+                        if f.endswith('.parquet'):
+                            local_path = os.path.join(root, f)
+                            rel_path = os.path.relpath(local_path, date_dir).replace('\\', '/')
+                            expected_s3_key = f"{prefix}{rel_path}"
+                            if expected_s3_key not in s3_keys:
+                                logger.info(f"Removing stale local chunk: {rel_path}")
+                                try:
+                                    os.remove(local_path)
+                                except Exception as e:
+                                    logger.warning(f"Failed to remove stale chunk {local_path}: {e}")
 
             # 3. Compare Cache vs S3
-            is_valid_cache = False
-            if local_meta and local_meta.get("etag") == s3_etag:
-                if os.path.exists(parquet_path):
-                    if self.validation.verify_cache_integrity(parquet_path):
-                        is_valid_cache = True
-                        self.metadata.touch_metadata(target_date)
-                        logger.debug(f"Cache Hit: {target_date}")
-                    else:
-                        logger.warning(f"Cached parquet {target_date} corrupted. Deleting.")
-                        os.remove(parquet_path)
-                        self.metadata.delete_metadata(target_date)
+            download_count = 0
+            total_duration = 0.0
 
-            if is_valid_cache:
-                return parquet_path
+            for obj in s3_objects:
+                # Key looks like: prefix/date=YYYY-MM-DD/hour=HH/part-HHMM-SS-<unique-id>.parquet
+                # We need to mirror this structure locally
+                rel_path = obj["key"].replace(f"{self.settings.S3_PARQUET_PREFIX}/date={target_date}/", "")
+                local_path = os.path.join(date_dir, rel_path)
+                os.makedirs(os.path.dirname(local_path), exist_ok=True)
+                
+                is_valid = False
+                if os.path.exists(local_path):
+                    try:
+                        if os.path.getsize(local_path) == obj["content_length"]:
+                            is_valid = True
+                        else:
+                            os.remove(local_path)
+                    except OSError:
+                        pass
+                
+                if not is_valid:
+                    logger.info(f"Downloading missing chunk: {rel_path}")
+                    success, duration = await asyncio.to_thread(
+                        self.downloader.stream_download_atomic, obj["key"], local_path
+                    )
+                    if success:
+                        download_count += 1
+                        total_duration += duration
+                
+            # Recalculate actual local Parquet size after stale cleanup & downloads
+            actual_local_size = self._get_date_cache_size(date_dir)
 
-            # 4. Cache Miss or Invalid → Download
-            logger.info(f"Cache Miss: {target_date}. Starting download...")
-            success, duration = await asyncio.to_thread(
-                self.downloader.stream_download_atomic, s3_key, parquet_path
-            )
-
-            if success:
-                logger.info(f"Download complete for {target_date} in {duration:.2f}s")
+            # 4. Save metadata for LRU tracking
+            if download_count > 0 or not self.metadata.load_metadata(target_date):
                 self.metadata.save_metadata(
                     target_date=target_date,
-                    s3_key=s3_key,
-                    etag=s3_etag,
-                    last_modified=s3_meta["last_modified"],
-                    file_size=s3_meta["content_length"],
-                    duration_sec=duration
+                    s3_key=prefix,
+                    etag=f"chunks-{len(s3_objects)}",
+                    last_modified="",
+                    file_size=actual_local_size,
+                    duration_sec=total_duration
                 )
-                return parquet_path
             else:
+                existing_meta = self.metadata.load_metadata(target_date)
+                if existing_meta:
+                    self.metadata.save_metadata(
+                        target_date=target_date,
+                        s3_key=existing_meta.get("s3_key", prefix),
+                        etag=existing_meta.get("etag", f"chunks-{len(s3_objects)}"),
+                        last_modified=existing_meta.get("last_modified_s3", ""),
+                        file_size=actual_local_size,
+                        duration_sec=existing_meta.get("download_duration_sec", 0.0)
+                    )
+
+            if not self._has_local_parquet(date_dir):
                 return None
+            return self.get_parquet_glob(target_date)
 
         finally:
             self.locks.release_lock(target_date)

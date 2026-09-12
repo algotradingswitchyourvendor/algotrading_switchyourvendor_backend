@@ -62,6 +62,7 @@ class Settings(BaseSettings):
     DOWNLOAD_LOCK_TIMEOUT: int = 60  # seconds
     S3_CHUNK_SIZE: int = 8192  # 8KB chunks
     S3_HEAD_TTL_SECONDS: int = 15  # TTL for S3 HEAD response cache
+    S3_HEAD_CACHE_MAX_ENTRIES: int = 1000  # Max HEAD cache entries
     DF_CACHE_MAX_ENTRIES: int = 3  # Max parquet DataFrames kept in memory (LRU)
     ENABLE_HISTORY_METRICS: bool = True  # Enable structured performance logging
 

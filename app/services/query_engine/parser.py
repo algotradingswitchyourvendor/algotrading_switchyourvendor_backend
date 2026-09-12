@@ -384,8 +384,11 @@ def parse_query_text(query_text: str) -> list[dict]:
     
     # 1. Early routing: Prevent legacy tokenizer from warning on math characters
     if _is_expression_query(clean_query):
-        from app.services.query_engine.expression_parser import parse_expression
-        return parse_expression(clean_query)
+        from app.services.query_engine.expression_parser import parse_expression, ParseError as ExprParseError
+        try:
+            return parse_expression(clean_query)
+        except ExprParseError as e:
+            raise ParseError(str(e))
 
     # 2. True legacy query
     try:

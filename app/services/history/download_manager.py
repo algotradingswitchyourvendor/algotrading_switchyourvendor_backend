@@ -49,7 +49,31 @@ class DownloadManager:
     def _set_cached_head(self, s3_key: str, result: Tuple[bool, Dict]) -> None:
         """Stores a HEAD result in the TTL cache."""
         with self._head_cache_lock:
+            # Re-insert to ensure it is marked as most recent (for LRU eviction)
+            if s3_key in self._head_cache:
+                del self._head_cache[s3_key]
+                
             self._head_cache[s3_key] = (time.monotonic(), result)
+            
+            # Enforce max entries limit
+            max_entries = getattr(self.settings, 'S3_HEAD_CACHE_MAX_ENTRIES', 1000)
+            if len(self._head_cache) > max_entries:
+                now = time.monotonic()
+                
+                # 1. Clear expired keys
+                expired_keys = [
+                    k for k, (cached_at, _) in self._head_cache.items()
+                    if (now - cached_at) >= self.settings.S3_HEAD_TTL_SECONDS
+                ]
+                for k in expired_keys:
+                    del self._head_cache[k]
+                    
+                # 2. Evict oldest entries if still over limit
+                while len(self._head_cache) > max_entries:
+                    # In Python 3.7+, dicts maintain insertion order.
+                    # next(iter()) returns the oldest key.
+                    oldest_key = next(iter(self._head_cache))
+                    del self._head_cache[oldest_key]
 
     def head_object(self, s3_key: str) -> Tuple[bool, Dict]:
         """
@@ -97,6 +121,26 @@ class DownloadManager:
                 self._set_cached_head(s3_key, result)
                 return result
             logger.error(f"S3 HEAD error for {s3_key}: {e}")
+            raise
+
+    def list_objects(self, prefix: str) -> list[dict]:
+        """Lists all objects in S3 matching a given prefix."""
+        try:
+            paginator = self.s3_client.get_paginator('list_objects_v2')
+            pages = paginator.paginate(Bucket=self.settings.S3_BUCKET_NAME, Prefix=prefix)
+            objects = []
+            for page in pages:
+                if "Contents" in page:
+                    for obj in page["Contents"]:
+                        objects.append({
+                            "key": obj["Key"],
+                            "etag": obj["ETag"].strip('"'),
+                            "last_modified": str(obj["LastModified"]),
+                            "content_length": obj["Size"]
+                        })
+            return objects
+        except Exception as e:
+            logger.error(f"Failed to list objects with prefix {prefix}: {e}")
             raise
 
     def stream_download_atomic(self, s3_key: str, dest_path: str) -> Tuple[bool, float]:

@@ -7,7 +7,7 @@ the existing MarketPulse `UpstoxScheduler` architecture.
 Key features maintained from the original architecture:
 - Environment variables via Settings
 - Callback registration (for LiveCache)
-- Single-file daily S3 appending (for History module compatibility)
+- 10-minute buffered immutable Parquet chunks (for History module compatibility)
 - Fetch Timestamp (for History module timeline grouping)
 - Holiday awareness
 """
@@ -56,6 +56,10 @@ class UpstoxScheduler:
         self.modified_cache_file = os.path.join(self.settings.CACHE_DIRECTORY, 'modified_data_cache.json')
         self.local_variables_file = os.path.join(self.settings.CACHE_DIRECTORY, 'local_variables_cache.parquet')
 
+        # S3 Buffer for 10-minute chunks
+        self.s3_buffer = []
+        self.s3_buffer_count = 0
+
         os.makedirs(self.settings.CACHE_DIRECTORY, exist_ok=True)
 
         # State dictionaries
@@ -90,14 +94,14 @@ class UpstoxScheduler:
                 self.previous_last_price.clear()
                 self.previous_avg_price.clear()
                 for row in rows:
-                    ik = row.get('Instrument_key')
+                    ik = row.get('instrument_key')
                     vol = row.get('Volume')
                     if ik and vol is not None:
                         self.previous_volume_[ik] = vol
-                    lp = row.get('Last_Price')
+                    lp = row.get('Last Price')
                     if ik and lp is not None:
                         self.previous_last_price[ik] = lp
-                    ap = row.get('Average_Price')
+                    ap = row.get('Average Price')
                     if ik and ap is not None:
                         self.previous_avg_price[ik] = ap
                 logger.info(f"Loaded previous volume for {len(self.previous_volume_)} stocks.")
@@ -349,24 +353,21 @@ class UpstoxScheduler:
             return pd.DataFrame()
 
     def fetch_all_fno_data(self) -> pd.DataFrame:
-        all_data = []
-        chunk_size = self.settings.FETCH_CHUNK_SIZE
-        total_tickers = len(self.ticker_list)
-
-        for i in range(0, total_tickers, chunk_size):
-            chunk = self.ticker_list[i : i + chunk_size]
-            end_idx = min(i + chunk_size, total_tickers)
-            logger.info(f"Fetching tickers {i + 1} to {end_idx}...")
+        if not self.ticker_list:
+            return pd.DataFrame()
             
+        all_data = []
+        # Upstox API allows up to 500 instruments per request, chunk them
+        chunk_size = 500
+        for i in range(0, len(self.ticker_list), chunk_size):
+            chunk = self.ticker_list[i : i + chunk_size]
             df = self.fetch_fno_data(chunk)
-
             if not df.empty:
                 all_data.append(df)
-
-        final_df = pd.concat(all_data, ignore_index=True) if all_data else pd.DataFrame()
-        if not final_df.empty:
-            logger.info(f"Fetched data:\n{final_df.shape[0]} rows × {final_df.shape[1]} cols")
-        return final_df
+        
+        if all_data:
+            return pd.concat(all_data, ignore_index=True)
+        return pd.DataFrame()
 
     # ── Processing & Enrichment ─────────────────────────────────────────
 
@@ -610,83 +611,55 @@ class UpstoxScheduler:
 
     # ── S3 Uploading ────────────────────────────────────────────────────
 
-    def _generate_daily_filename(self) -> str:
-        current_date = datetime.now(IST).strftime("%Y-%m-%d")
-        return f"{self.settings.S3_PARQUET_PREFIX}/{current_date}_Equity.parquet"
+    def _generate_chunk_filename(self) -> str:
+        import uuid
+        current_time = datetime.now(IST)
+        date_str = current_time.strftime("%Y-%m-%d")
+        hour_str = current_time.strftime("%H")
+        time_str = current_time.strftime("%H%M-%S")
+        unique_id = uuid.uuid4().hex[:6]
+        # Hive-style partition: date=YYYY-MM-DD/hour=HH/part-HHMM-SS-<unique-id>.parquet
+        return f"{self.settings.S3_PARQUET_PREFIX}/date={date_str}/hour={hour_str}/part-{time_str}-{unique_id}.parquet"
 
     def upload_to_s3(self, df: pd.DataFrame) -> None:
-        """Uploads to S3 by appending to today's parquet file (Preserves History compatibility)."""
-        import time
-        import gc
+        """Buffers 1-minute frames and uploads immutable 10-minute chunks to S3."""
+        self.s3_buffer.append(df)
+        self.s3_buffer_count += 1
+        
+        current_time = datetime.now(IST)
+        is_market_close = current_time.hour == 15 and current_time.minute >= 30
+        
+        # Upload if we have 10 minutes of data, or if market just closed
+        if self.s3_buffer_count >= 10 or is_market_close:
+            self.flush_s3_buffer()
+
+    def flush_s3_buffer(self) -> None:
+        if not self.s3_buffer:
+            return
+            
         import pyarrow as pa
         import pyarrow.parquet as pq
+        import gc
+        import time
+        
         try:
-            file_name = self._generate_daily_filename()
-            try:
-                t0 = time.time()
-                parquet_obj = self.s3_client.get_object(
-                    Bucket=self.settings.S3_BUCKET_NAME, Key=file_name
-                )
-                body_bytes = parquet_obj["Body"].read()
-                t_download = time.time() - t0
-                
-                t0 = time.time()
-                existing_table = pq.read_table(BytesIO(body_bytes))
-                t_read = time.time() - t0
-                
-                # Free the large bytes string immediately
-                del body_bytes
-                gc.collect()
-            except self.s3_client.exceptions.NoSuchKey:
-                existing_table = None
-                t_download, t_read = 0.0, 0.0
-            except Exception as e:
-                logger.warning(f"Could not read existing parquet: {e}")
-                existing_table = None
-                t_download, t_read = 0.0, 0.0
-
+            combined_df = pd.concat(self.s3_buffer, ignore_index=True)
+            self.s3_buffer.clear()
+            self.s3_buffer_count = 0
+            
             int_cols = ["Hour", "Minute", "Second"]
-            
             for col in int_cols:
-                if col in df.columns:
-                    df[col] = pd.to_numeric(df[col], errors="coerce").fillna(0).astype("int64")
+                if col in combined_df.columns:
+                    combined_df[col] = pd.to_numeric(combined_df[col], errors="coerce").fillna(0).astype("int64")
 
-            t0 = time.time()
-            if existing_table is not None:
-                # Convert new data to PyArrow matching the existing schema
-                try:
-                    new_table = pa.Table.from_pandas(df, schema=existing_table.schema)
-                except Exception:
-                    new_table = pa.Table.from_pandas(df)
-                    
-                # Zero-copy concatenation (just links chunk pointers in memory)
-                combined_table = pa.concat_tables([existing_table, new_table], promote_options='default')
-                
-                # Release existing tables
-                existing_mem = existing_table.nbytes / (1024**2)
-                del existing_table, new_table
-                gc.collect()
-            else:
-                combined_table = pa.Table.from_pandas(df)
-                existing_mem = 0.0
-            t_concat = time.time() - t0
+            table = pa.Table.from_pandas(combined_df)
             
-            logger.info("=== S3 MEMORY PROFILING (PYARROW) ===")
-            logger.info(f"existing_table memory: {existing_mem:.2f} MB")
-            logger.info(f"new_df pandas memory: {df.memory_usage(deep=True).sum() / (1024**2):.2f} MB")
-            logger.info(f"combined_table memory: {combined_table.nbytes / (1024**2):.2f} MB")
-            logger.info("=== S3 TIMING PROFILING ===")
-            logger.info(f"S3 download: {t_download:.2f} sec")
-            logger.info(f"pq.read_table(): {t_read:.2f} sec")
-            logger.info(f"pa.concat_tables(): {t_concat:.2f} sec")
-
             parquet_buffer = BytesIO()
-            pq.write_table(combined_table, parquet_buffer)
+            pq.write_table(table, parquet_buffer)
             
-            # Release massive combined table before S3 upload
-            del combined_table
-            gc.collect()
-
+            # S3 upload
+            file_name = self._generate_chunk_filename()
+            
             t0 = time.time()
             self.s3_client.put_object(
                 Bucket=self.settings.S3_BUCKET_NAME,
@@ -694,14 +667,24 @@ class UpstoxScheduler:
                 Body=parquet_buffer.getvalue(),
             )
             t_upload = time.time() - t0
-            logger.info(f"upload: {t_upload:.2f} sec")
-            logger.info(f"S3 upload complete: s3://{self.settings.S3_BUCKET_NAME}/{file_name}")
             
-            # Final cleanup
-            del parquet_buffer
+            # Measure sizes
+            df_mem_mb = combined_df.memory_usage(deep=True).sum() / (1024**2)
+            parquet_size_mb = len(parquet_buffer.getvalue()) / (1024**2)
+            
+            logger.info("=== S3 IMMUTABLE CHUNK UPLOAD ===")
+            logger.info(f"Key: {file_name}")
+            logger.info(f"Rows: {len(combined_df)}")
+            logger.info(f"DataFrame RAM: {df_mem_mb:.2f} MB")
+            logger.info(f"Parquet Size: {parquet_size_mb:.2f} MB")
+            logger.info(f"Upload Time: {t_upload:.2f} sec")
+            
+            # Release memory
+            del combined_df, table, parquet_buffer
             gc.collect()
+            
         except Exception as e:
-            logger.error(f"Error uploading to S3: {e}")
+            logger.error(f"Error flushing to S3: {e}")
 
     # ── Scheduled Tasks ─────────────────────────────────────────────────
 
@@ -760,7 +743,7 @@ class UpstoxScheduler:
                 return
 
             t0 = time.time()
-            # Append to single daily Parquet
+           # Buffer and upload immutable 10-minute Parquet chunk
             self.upload_to_s3(master_df)
             t_s3 = time.time() - t0
 
@@ -838,9 +821,12 @@ class UpstoxScheduler:
         self.scheduler.start()
         logger.info("Upstox Variables Scheduler started")
 
-    def stop(self):
+    def stop(self) -> None:
+        """Stop the background scheduler gracefully."""
         if self.scheduler:
             self.scheduler.shutdown(wait=False)
+            logger.info("Scheduler stopped")
+        self.flush_s3_buffer()
 
     @property
     def is_running(self):
