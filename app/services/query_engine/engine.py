@@ -41,7 +41,7 @@ logger = logging.getLogger(__name__)
 MAX_RESULT_ROWS = 5000
 
 
-def execute_query(
+async def execute_query(
     request: UnifiedQueryRequest,
     cache: LiveCache,
 ) -> tuple[list[dict], dict]:
@@ -64,7 +64,7 @@ def execute_query(
     conditions = resolve_conditions(request)
 
     # ── Step 2: Load DataFrame via adapter ──────────────────────────
-    adapter_result = _load_dataframe(request, cache)
+    adapter_result = await _load_dataframe(request, cache)
     
     # Check if we got an AdapterResult or a raw DataFrame
     if hasattr(adapter_result, "is_pre_processed"):
@@ -219,17 +219,17 @@ def resolve_conditions(request: UnifiedQueryRequest) -> list[dict]:
     raise ValueError("No conditions or query_text provided")
 
 
-def _load_dataframe(
+async def _load_dataframe(
     request: UnifiedQueryRequest,
     cache: LiveCache,
 ) -> Any:
     """Select the appropriate adapter and load data. Returns DataFrame or AdapterResult."""
     if request.execution_target == "history":
         adapter = HistoryAdapter()
-        return adapter.get_dataframe(request=request)
+        return await adapter.get_dataframe(request=request)
     else:
         adapter = LiveAdapter()
-        return adapter.get_dataframe(cache)
+        return await adapter.get_dataframe(cache)
 
 
 def _build_meta(

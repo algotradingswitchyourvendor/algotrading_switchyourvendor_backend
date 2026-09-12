@@ -82,16 +82,13 @@ class LiveCache:
 
         with self._lock:
             self._previous_df = self._current_df
-            self._current_df = new_df.copy()
+            self._current_df = new_df
             self._snapshot_id += 1
             self._last_updated = datetime.now(IST)
 
             # Build instrument index for fast lookups
             if "Instrument" in new_df.columns:
-                self._instrument_index = {
-                    row["Instrument"]: idx
-                    for idx, row in new_df.iterrows()
-                }
+                self._instrument_index = dict(zip(new_df["Instrument"], new_df.index))
 
             # Compute changed rows
             changed = self._compute_diff()

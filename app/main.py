@@ -147,13 +147,6 @@ def create_app() -> FastAPI:
         allow_headers=["*"],
     )
 
-    # ── Proxy Keep-Alive Fix Middleware ─────────────────────────────────
-    from fastapi import Request
-    @app.middleware("http")
-    async def force_connection_close(request: Request, call_next):
-        response = await call_next(request)
-        response.headers["Connection"] = "close"
-        return response
 
     # ── API Routers ─────────────────────────────────────────────────────
     from app.api.dashboard import router as dashboard_router

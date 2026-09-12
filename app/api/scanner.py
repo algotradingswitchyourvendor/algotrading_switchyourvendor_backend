@@ -35,7 +35,7 @@ async def query_scanner(request: Request, body: UnifiedQueryRequest):
         )
 
     try:
-        records, meta = execute_query(request=body, cache=cache)
+        records, meta = await execute_query(request=body, cache=cache)
 
         return success_response(
             data=records,
@@ -88,7 +88,7 @@ async def run_scanner(request: Request, body: ScannerRequest):
             page_size=body.page_size,
         )
 
-        records, meta = execute_query(request=unified, cache=cache)
+        records, meta = await execute_query(request=unified, cache=cache)
 
         return success_response(
             data=records,

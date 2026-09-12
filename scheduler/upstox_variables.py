@@ -375,7 +375,7 @@ class UpstoxScheduler:
         """Calculates premarket gain at 09:15 for all stocks."""
         logger.info("Running Pre-Market Gain calculation...")
         count = 0
-        for _, row in live_df.iterrows():
+        for row in live_df.to_dict('records'):
             instrument_key = row.get('instrument_key')
             current_open = pd.to_numeric(row.get('Open'), errors='coerce')
             prev_close = self.last_price_mapping.get(instrument_key)
@@ -399,7 +399,7 @@ class UpstoxScheduler:
             final_df = self.fetch_all_fno_data()
             if not final_df.empty:
                 count = 0
-                for _, row in final_df.iterrows():
+                for row in final_df.to_dict('records'):
                     ik = row.get('instrument_key')
                     volume = pd.to_numeric(row.get('Volume'), errors='coerce')
                     close = pd.to_numeric(row.get('Close'), errors='coerce')
@@ -455,7 +455,7 @@ class UpstoxScheduler:
         current_hour, current_minute, current_second = now.hour, now.minute, now.second
         
         output_rows = []
-        for _, row in live_df.iterrows():
+        for row in live_df.to_dict('records'):
             instrument_key = row.get('instrument_key')
             symbol = row.get('Symbol')
             current_volume = pd.to_numeric(row.get('Volume'), errors='coerce')
