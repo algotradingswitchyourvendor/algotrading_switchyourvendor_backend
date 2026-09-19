@@ -1,0 +1,9 @@
+fix: Enhance reliability for scheduler, logging, and payment services
+
+- Fixed thread-safety issues in LogCaptureHandler with a threading lock.
+- Refactored Razorpay synchronous calls to use asyncio.to_thread to prevent blocking the async event loop.
+- Enhanced Upstox scheduler reliability:
+  - Enabled headless mode by default.
+  - S3 buffer now correctly clears only after successful uploads.
+  - Implemented local preservation of pending S3 buffers to local parquet files during shutdown if S3 upload fails.
+- Added database migration for active subscription unique index.

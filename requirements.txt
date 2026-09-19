@@ -17,3 +17,12 @@ pydantic-settings==2.*
 python-dotenv==1.*
 python-multipart
 duckdb
+
+# ── SaaS / Auth / Database Layer ────────────────────────────────────
+sqlalchemy[asyncio]==2.*
+asyncpg==0.30.*
+alembic==1.14.*
+redis[asyncio]==5.*
+httpx==0.28.*
+cryptography==44.*
+razorpay==1.*

@@ -35,7 +35,7 @@ class BaseAdapter(ABC):
     """Provides the current live market snapshot as a DataFrame."""
 
     @abstractmethod
-    def get_dataframe(
+    async def get_dataframe(
         self,
         cache: Optional[LiveCache] = None,
         request: Optional[UnifiedQueryRequest] = None,
@@ -49,15 +49,15 @@ class BaseAdapter(ABC):
 class LiveAdapter(BaseAdapter):
     """Provides the current live market snapshot as a DataFrame."""
 
-    def get_dataframe(self, cache: LiveCache) -> pd.DataFrame:
+    async def get_dataframe(self, cache: LiveCache) -> pd.DataFrame:
         """
         Get the current live snapshot.
 
         Returns:
             pd.DataFrame with all live instruments, or empty DataFrame.
         """
-        if not cache.is_populated:
-            logger.warning("LiveAdapter: cache not populated")
+        if not cache or not cache.is_populated:
+            logger.warning("LiveAdapter: cache not populated or missing")
             return pd.DataFrame()
 
         df = cache.get_snapshot()
@@ -69,7 +69,7 @@ class LiveAdapter(BaseAdapter):
 class HistoryAdapter(BaseAdapter):
     """Provides historical data from Parquet files as a DataFrame."""
 
-    def get_dataframe(
+    async def get_dataframe(
         self,
         request: UnifiedQueryRequest,
     ) -> AdapterResult:
@@ -83,21 +83,9 @@ class HistoryAdapter(BaseAdapter):
         import asyncio
 
         try:
-            # history_service may be async; handle both cases
-            coro = get_historical_dataframe(
+            result = await get_historical_dataframe(
                 request=request
             )
-
-            # If we're inside an event loop, run directly; otherwise use asyncio.run
-            try:
-                loop = asyncio.get_running_loop()
-                # We're inside an async context — create a task
-                import concurrent.futures
-                with concurrent.futures.ThreadPoolExecutor() as pool:
-                    result = pool.submit(asyncio.run, coro).result()
-            except RuntimeError:
-                # No running loop — safe to use asyncio.run
-                result = asyncio.run(coro)
 
             if result is None:
                 return pd.DataFrame()

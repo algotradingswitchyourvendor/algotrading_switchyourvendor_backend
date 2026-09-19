@@ -82,16 +82,13 @@ class LiveCache:
 
         with self._lock:
             self._previous_df = self._current_df
-            self._current_df = new_df.copy()
+            self._current_df = new_df
             self._snapshot_id += 1
             self._last_updated = datetime.now(IST)
 
             # Build instrument index for fast lookups
             if "Instrument" in new_df.columns:
-                self._instrument_index = {
-                    row["Instrument"]: idx
-                    for idx, row in new_df.iterrows()
-                }
+                self._instrument_index = dict(zip(new_df["Instrument"], new_df.index))
 
             # Compute changed rows
             changed = self._compute_diff()
@@ -193,12 +190,14 @@ class LiveCache:
                 return self._row_to_dict(row)
 
             # Partial match on trading_symbol or Instrument
+            # regex=False is CRITICAL: prevents user input (e.g., 'NIFTY+50', 'ACC.NSE')
+            # from being interpreted as a regex pattern, which would raise an error.
             mask = (
-                self._current_df["Instrument"].str.contains(instrument, case=False, na=False)
+                self._current_df["Instrument"].str.contains(instrument, case=False, na=False, regex=False)
             )
             if "trading_symbol" in self._current_df.columns:
                 mask = mask | self._current_df["trading_symbol"].str.contains(
-                    instrument, case=False, na=False
+                    instrument, case=False, na=False, regex=False
                 )
 
             matches = self._current_df[mask]
@@ -226,16 +225,18 @@ class LiveCache:
             query_lower = query.lower()
             df = self._current_df
 
-            mask = df["Instrument"].str.lower().str.contains(query_lower, na=False)
+            # regex=False: user input must not be interpreted as a regex pattern.
+            # Queries like 'NIFTY+50', 'L&T', 'ACC.NSE' would fail without this.
+            mask = df["Instrument"].str.lower().str.contains(query_lower, na=False, regex=False)
 
             if "trading_symbol" in df.columns:
                 mask = mask | df["trading_symbol"].str.lower().str.contains(
-                    query_lower, na=False
+                    query_lower, na=False, regex=False
                 )
 
             if "company_name" in df.columns:
                 mask = mask | df["company_name"].str.lower().str.contains(
-                    query_lower, na=False
+                    query_lower, na=False, regex=False
                 )
 
             results = df[mask].head(limit)

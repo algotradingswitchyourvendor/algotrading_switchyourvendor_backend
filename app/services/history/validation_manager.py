@@ -1,6 +1,6 @@
 import logging
 import os
-import pyarrow.parquet as pq
+import duckdb
 
 logger = logging.getLogger(__name__)
 
@@ -24,12 +24,9 @@ class ValidationManager:
             return False
 
         try:
-            # pq.ParquetFile lazily loads metadata, which quickly verifies 
-            # if the file is structurally a valid parquet without reading it fully.
-            pq_file = pq.ParquetFile(file_path)
-            if not pq_file.schema:
-                logger.warning(f"Cache validation failed: No schema found ({file_path})")
-                return False
+            # Use duckdb's built-in parquet metadata reader. 
+            # This avoids pyarrow DLL loading issues on strict Windows environments.
+            duckdb.execute(f"SELECT * FROM parquet_metadata('{file_path}') LIMIT 1")
             return True
         except Exception as e:
             logger.error(f"Cache validation failed: Corrupt parquet ({file_path}) - {e}")

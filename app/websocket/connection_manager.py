@@ -120,11 +120,18 @@ class ConnectionManager:
 
     async def _broadcast(self, message: dict) -> None:
         """Send a message to all connected clients."""
+        if not self._connections:
+            return
+            
         disconnected = set()
+        
+        # Optimize CPU: Serialize JSON exactly once per broadcast
+        raw_json = json.dumps(message)
 
         for ws in self._connections.copy():
             try:
-                await self._send(ws, message)
+                if ws.client_state == WebSocketState.CONNECTED:
+                    await ws.send_text(raw_json)
             except Exception:
                 disconnected.add(ws)
 

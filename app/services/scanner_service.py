@@ -19,7 +19,7 @@ from app.services.query_engine import execute_query
 logger = logging.getLogger(__name__)
 
 
-def evaluate_scanner(
+async def evaluate_scanner(
     cache: LiveCache,
     conditions: list[dict],
     mode: str = "live",
@@ -48,7 +48,7 @@ def evaluate_scanner(
             page_size=page_size,
         )
 
-        records, meta = execute_query(request=req, cache=cache)
+        records, meta = await execute_query(request=req, cache=cache)
         return records, meta
     except Exception as e:
         logger.error(f"Legacy evaluate_scanner failed: {e}")
