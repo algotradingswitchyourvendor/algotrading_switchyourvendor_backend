@@ -295,13 +295,19 @@ async def zerodha_callback(
     request_token: Optional[str] = None,
     status: Optional[str] = None,
     action: Optional[str] = None,
+    state: Optional[str] = None,
     db: AsyncSession = Depends(get_db),
+    mp_oauth_state: Optional[str] = Cookie(default=None, alias=OAUTH_STATE_COOKIE),
 ):
     """Handle Zerodha Kite Connect callback. Note: Kite uses 'request_token', not 'code'."""
     settings = get_settings()
 
     if not settings.ZERODHA_MULTI_USER_ENABLED:
         raise HTTPException(503, detail="Zerodha multi-user login is not enabled")
+
+    if not _validate_state(state, mp_oauth_state):
+        logger.warning("Zerodha OAuth state mismatch — possible CSRF")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=invalid_state")
 
     if status != "success" or not request_token:
         logger.warning(f"Zerodha callback failed: status={status}")
@@ -321,6 +327,7 @@ async def zerodha_callback(
             status_code=302,
         )
         _set_session_cookie(redirect, raw_token, settings)
+        redirect.delete_cookie(OAUTH_STATE_COOKIE, path="/api/v1/auth")
         return redirect
 
     except Exception as e:

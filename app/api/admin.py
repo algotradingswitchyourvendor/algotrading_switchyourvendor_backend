@@ -100,7 +100,7 @@ async def admin_stats(
                 "FREE": sub_stats.get("FREE", 0),
                 "BASIC": sub_stats.get("BASIC", 0),
                 "PRO": sub_stats.get("PRO", 0),
-                "PREMIUM": sub_stats.get("PREMIUM", 0),
+                "ULTRA": sub_stats.get("ULTRA", 0),
             },
         },
         "payments": {

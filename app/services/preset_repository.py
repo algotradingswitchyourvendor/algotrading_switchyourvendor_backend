@@ -48,12 +48,13 @@ class FilePresetRepository(BasePresetRepository):
     For multi-worker or cloud deployments, this must be replaced with a PostgreSQL repository
     to prevent file locking bottlenecks and ensure proper concurrent state management.
     """
-    def __init__(self, storage_path: str = None):
+    def __init__(self, storage_path: str = None, user_id: Optional[str] = None):
         if not storage_path:
             storage_path = os.path.join(
                 os.path.dirname(__file__), "..", "storage", "user_presets.json"
             )
         self.storage_path = storage_path
+        self.user_id = user_id
         self._lock = threading.Lock()
         self._ensure_storage_exists()
 
@@ -106,6 +107,14 @@ class FilePresetRepository(BasePresetRepository):
         json_str = json.dumps(normalized, sort_keys=True)
         return hashlib.sha256(json_str.encode('utf-8')).hexdigest()
 
+    def _user_owns(self, item: dict) -> bool:
+        if not self.user_id:
+            return True
+        item_user_id = item.get("user_id")
+        if not item_user_id:
+            return True
+        return item_user_id == self.user_id
+
     def get_all(self, include_deleted: bool = False) -> List[PresetResponse]:
         with self._lock:
             data = self._read_data()
@@ -113,7 +122,11 @@ class FilePresetRepository(BasePresetRepository):
             for item in data:
                 if not include_deleted and item.get("is_deleted", False):
                     continue
-                presets.append(PresetResponse(**item))
+                if not self._user_owns(item):
+                    continue
+                # Remove user_id from kwargs before initializing PresetResponse
+                kwargs = {k: v for k, v in item.items() if k != "user_id"}
+                presets.append(PresetResponse(**kwargs))
             return presets
 
     def get_by_id(self, preset_id: str) -> Optional[PresetResponse]:
@@ -121,7 +134,10 @@ class FilePresetRepository(BasePresetRepository):
             data = self._read_data()
             for item in data:
                 if item.get("id") == preset_id:
-                    return PresetResponse(**item)
+                    if not self._user_owns(item):
+                        return None
+                    kwargs = {k: v for k, v in item.items() if k != "user_id"}
+                    return PresetResponse(**kwargs)
             return None
 
     def find_duplicate(self, name: str, request: Any) -> Optional[PresetResponse]:
@@ -132,19 +148,25 @@ class FilePresetRepository(BasePresetRepository):
             for item in data:
                 if item.get("is_deleted", False):
                     continue
+                if not self._user_owns(item):
+                    continue
                 
                 # Match by name OR payload
                 item_hash = self._hash_conditions(item.get("request", {}))
                 
                 if item.get("name") == name or item_hash == target_hash:
-                    return PresetResponse(**item)
+                    kwargs = {k: v for k, v in item.items() if k != "user_id"}
+                    return PresetResponse(**kwargs)
                     
             return None
 
     def create(self, preset: PresetResponse) -> PresetResponse:
         with self._lock:
             data = self._read_data()
-            data.append(preset.model_dump(mode="json"))
+            preset_dict = preset.model_dump(mode="json")
+            if self.user_id:
+                preset_dict["user_id"] = self.user_id
+            data.append(preset_dict)
             self._write_data(data)
             return preset
 
@@ -153,6 +175,8 @@ class FilePresetRepository(BasePresetRepository):
             data = self._read_data()
             for i, item in enumerate(data):
                 if item.get("id") == preset_id:
+                    if not self._user_owns(item):
+                        raise PermissionError("Permission denied")
                     if updates.name is not None:
                         item["name"] = updates.name
                     if updates.description is not None:
@@ -172,8 +196,13 @@ class FilePresetRepository(BasePresetRepository):
                         
                     item["updated_at"] = now_iso
                     
-                    updated_preset = PresetResponse(**item)
-                    data[i] = updated_preset.model_dump(mode="json")
+                    kwargs = {k: v for k, v in item.items() if k != "user_id"}
+                    updated_preset = PresetResponse(**kwargs)
+                    # Re-inject user_id for storage
+                    stored_item = updated_preset.model_dump(mode="json")
+                    if "user_id" in item:
+                        stored_item["user_id"] = item["user_id"]
+                    data[i] = stored_item
                     self._write_data(data)
                     return updated_preset
             return None
@@ -183,6 +212,8 @@ class FilePresetRepository(BasePresetRepository):
             data = self._read_data()
             for i, item in enumerate(data):
                 if item.get("id") == preset_id:
+                    if not self._user_owns(item):
+                        raise PermissionError("Permission denied")
                     item["is_deleted"] = True
                     item["updated_at"] = now_iso
                     self._write_data(data)
@@ -194,11 +225,17 @@ class FilePresetRepository(BasePresetRepository):
             data = self._read_data()
             for i, item in enumerate(data):
                 if item.get("id") == preset_id:
+                    if not self._user_owns(item):
+                        raise PermissionError("Permission denied")
                     item["usage_count"] = item.get("usage_count", 0) + 1
                     item["last_used"] = now_iso
                     
-                    updated_preset = PresetResponse(**item)
-                    data[i] = updated_preset.model_dump(mode="json")
+                    kwargs = {k: v for k, v in item.items() if k != "user_id"}
+                    updated_preset = PresetResponse(**kwargs)
+                    stored_item = updated_preset.model_dump(mode="json")
+                    if "user_id" in item:
+                        stored_item["user_id"] = item["user_id"]
+                    data[i] = stored_item
                     self._write_data(data)
                     return updated_preset
             return None

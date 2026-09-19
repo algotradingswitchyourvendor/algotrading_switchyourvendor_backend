@@ -70,6 +70,7 @@ def get_authorization_url(state: str) -> str:
     params = {
         "v": "3",
         "api_key": settings.ZERODHA_API_KEY,
+        "state": state,
     }
     # state parameter is passed via redirect_params if supported, else use redirect URI
     return f"{ZERODHA_LOGIN_URL}?{urlencode(params)}"

@@ -20,17 +20,20 @@ import uuid
 from datetime import datetime, timezone
 from typing import Optional
 
+from enum import Enum as PyEnum
+
 from sqlalchemy import (
     UUID,
     Boolean,
     DateTime,
-    Enum,
+    Enum as SQLEnum,
     ForeignKey,
     Index,
     Integer,
     String,
     Text,
     UniqueConstraint,
+    text,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import Mapped, mapped_column, relationship
@@ -49,18 +52,18 @@ def _now() -> datetime:
 
 # ── Enums ─────────────────────────────────────────────────────────────────────
 
-class UserRole(str, Enum):
+class UserRole(str, PyEnum):
     USER = "USER"
     ADMIN = "ADMIN"
 
 
-class UserStatus(str, Enum):
+class UserStatus(str, PyEnum):
     ACTIVE = "ACTIVE"
     SUSPENDED = "SUSPENDED"
     DELETED = "DELETED"
 
 
-class SubscriptionStatus(str, Enum):
+class SubscriptionStatus(str, PyEnum):
     TRIALING = "TRIALING"
     ACTIVE = "ACTIVE"
     PAST_DUE = "PAST_DUE"
@@ -68,7 +71,7 @@ class SubscriptionStatus(str, Enum):
     EXPIRED = "EXPIRED"
 
 
-class PaymentStatus(str, Enum):
+class PaymentStatus(str, PyEnum):
     PENDING = "PENDING"
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
@@ -297,6 +300,12 @@ class Subscription(Base):
         Index("ix_subscriptions_user_id", "user_id"),
         Index("ix_subscriptions_status", "status"),
         Index("ix_subscriptions_razorpay_id", "razorpay_subscription_id"),
+        Index(
+            "ix_uq_active_subscription", 
+            "user_id", 
+            unique=True, 
+            postgresql_where=text("status = 'ACTIVE'")
+        ),
     )
 
 

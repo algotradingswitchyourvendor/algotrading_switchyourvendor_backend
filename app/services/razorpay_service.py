@@ -21,6 +21,7 @@ Webhook events handled:
   subscription.completed      — all billing cycles finished (EXPIRED)
 """
 
+import asyncio
 import hashlib
 import hmac
 import logging
@@ -69,7 +70,7 @@ async def create_razorpay_plan(
         },
     }
 
-    plan = client.plan.create(plan_data)
+    plan = await asyncio.to_thread(client.plan.create, plan_data)
     plan_id = plan.get("id")
     if not plan_id:
         raise ValueError(f"Razorpay did not return plan ID for {name}")
@@ -103,7 +104,7 @@ async def create_razorpay_subscription(
     if notes:
         sub_data["notes"] = notes
 
-    subscription = client.subscription.create(sub_data)
+    subscription = await asyncio.to_thread(client.subscription.create, sub_data)
     logger.info(f"Created Razorpay subscription: {subscription.get('id')}")
     return subscription
 
@@ -122,7 +123,8 @@ async def cancel_razorpay_subscription(
     """
     client = _get_client()
     try:
-        client.subscription.cancel(
+        await asyncio.to_thread(
+            client.subscription.cancel,
             razorpay_subscription_id,
             {"cancel_at_cycle_end": 1 if cancel_at_cycle_end else 0},
         )
@@ -161,13 +163,13 @@ def verify_webhook_signature(payload_body: bytes, signature: str) -> bool:
 async def fetch_razorpay_subscription(razorpay_subscription_id: str) -> dict:
     """Fetch subscription details from Razorpay API."""
     client = _get_client()
-    return client.subscription.fetch(razorpay_subscription_id)
+    return await asyncio.to_thread(client.subscription.fetch, razorpay_subscription_id)
 
 
 async def fetch_razorpay_invoice(invoice_id: str) -> dict:
     """Fetch invoice details from Razorpay API."""
     client = _get_client()
-    return client.invoice.fetch(invoice_id)
+    return await asyncio.to_thread(client.invoice.fetch, invoice_id)
 
 
 def map_razorpay_status_to_db(razorpay_status: str) -> str:

@@ -98,7 +98,9 @@ class PostgresPresetRepository:
     async def _get_model(self, preset_id: str) -> Optional[Preset]:
         """Get raw ORM model (for mutations)."""
         result = await self.db.execute(
-            select(Preset).where(Preset.id == preset_id)
+            select(Preset)
+            .where(Preset.id == preset_id)
+            .where(self._user_filter())
         )
         return result.scalar_one_or_none()
 
@@ -192,7 +194,11 @@ class PostgresPresetRepository:
         p = await self._get_model(preset_id)
         if not p or p.is_deleted:
             return None
-        # Anyone with access can increment usage (for public presets)
+            
+        if p.user_id is not None and not self._user_owns(p):
+            raise PermissionError(f"User {self.user_id} does not own preset {preset_id}")
+            
+        # Anyone with access can increment usage (for public system presets)
         p.usage_count = (p.usage_count or 0) + 1
         p.last_used = datetime.now(timezone.utc)
         await self.db.flush()

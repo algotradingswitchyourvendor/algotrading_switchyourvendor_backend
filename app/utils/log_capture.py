@@ -13,7 +13,9 @@ class LogCaptureHandler(logging.Handler):
     """
     def __init__(self, maxlen: int = 500):
         super().__init__()
+        import threading
         self.log_records = deque(maxlen=maxlen)
+        self._lock = threading.Lock()
 
     def emit(self, record: logging.LogRecord):
         try:
@@ -41,26 +43,28 @@ class LogCaptureHandler(logging.Handler):
                 "logger_name": record.name
             }
             
-            self.log_records.appendleft(log_entry)
+            with self._lock:
+                self.log_records.appendleft(log_entry)
         except Exception:
             self.handleError(record)
 
     def get_logs(self, service: Optional[str] = None, level: Optional[str] = None, limit: int = 50) -> List[Dict]:
         """Returns the most recent logs, optionally filtered."""
         results = []
-        # log_records is a deque populated using appendleft, so it is already newest-first
-        for record in self.log_records:
-            if service and service.lower() != "all":
-                if record["service"] != service.lower():
-                    continue
-            if level and level.lower() != "all":
-                if record["level"] != level.upper():
-                    continue
-            
-            results.append(record)
-            if len(results) >= limit:
-                break
+        with self._lock:
+            # log_records is a deque populated using appendleft, so it is already newest-first
+            for record in self.log_records:
+                if service and service.lower() != "all":
+                    if record["service"] != service.lower():
+                        continue
+                if level and level.lower() != "all":
+                    if record["level"] != level.upper():
+                        continue
                 
+                results.append(record)
+                if len(results) >= limit:
+                    break
+                    
         return results
 
 # Singleton instance to be attached to the root logger

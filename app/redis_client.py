@@ -38,7 +38,7 @@ async def init_redis() -> aioredis.Redis:
         return None
 
     try:
-        _redis_client = await aioredis.from_url(
+        _redis_client = aioredis.from_url(
             settings.REDIS_URL,
             encoding="utf-8",
             decode_responses=True,

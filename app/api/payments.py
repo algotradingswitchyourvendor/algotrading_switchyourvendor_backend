@@ -88,12 +88,7 @@ async def create_subscription_checkout(
     )
     active_sub = result.scalar_one_or_none()
     if active_sub:
-        current_plan_result = await db.execute(
-            select(SubscriptionPlan).where(SubscriptionPlan.id == active_sub.plan_id)
-        )
-        current_plan = current_plan_result.scalar_one_or_none()
-        if current_plan and current_plan.name == body.plan_name:
-            raise HTTPException(400, detail="You are already subscribed to this plan")
+        raise HTTPException(400, detail="You already have an active subscription.")
 
     try:
         rzp_subscription = await create_razorpay_subscription(
@@ -112,7 +107,12 @@ async def create_subscription_checkout(
         razorpay_subscription_id=rzp_subscription.get("id"),
     )
     db.add(subscription)
-    await db.commit()
+    try:
+        await db.commit()
+    except IntegrityError:
+        await db.rollback()
+        logger.warning(f"Concurrent subscription creation prevented for user {user.id}")
+        raise HTTPException(400, detail="You already have an active subscription.")
 
     settings_obj = None
     try:
@@ -162,11 +162,13 @@ async def razorpay_webhook(
     payload = await request.json()
     event_type = payload.get("event", "")
     # Razorpay uses event ID from the payload — some have event_id, some use account_id+timestamp
-    provider_event_id = payload.get("id") or f"{event_type}:{payload.get('created_at', '')}"
-
+    provider_event_id = payload.get("id")
     if not provider_event_id:
-        logger.error("Razorpay webhook missing event ID")
-        raise HTTPException(400, detail="Missing event ID")
+        if event_type and payload.get('created_at'):
+            provider_event_id = f"{event_type}:{payload.get('created_at')}"
+        else:
+            logger.error("Razorpay webhook missing event ID and sufficient fallback data")
+            raise HTTPException(400, detail="Missing event ID")
 
     # Step 2: Idempotency check — insert event record
     event_row = PaymentEvent(
@@ -195,8 +197,8 @@ async def razorpay_webhook(
     except Exception as e:
         await db.rollback()
         logger.error(f"Webhook processing error for {event_type}: {e}", exc_info=True)
-        # Still return 200 to prevent Razorpay from endlessly retrying on code bugs - log for manual review
-        return {"status": "ok", "message": "error logged for review"}
+        # Ensure Razorpay retries the webhook by returning 500
+        raise HTTPException(500, detail="Internal processing error")
 
     return {"status": "ok"}
 

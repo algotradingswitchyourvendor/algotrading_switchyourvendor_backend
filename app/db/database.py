@@ -95,8 +95,11 @@ async def get_db() -> AsyncGenerator[AsyncSession, None]:
 
 
 async def init_db():
-    """Create all tables (used for initial setup / tests). Alembic manages migrations in production."""
+    """
+    Validate database connectivity on startup.
+    (Alembic manages migrations and schema creation in production).
+    """
     engine = get_engine()
-    from app.db import models  # noqa: F401 — ensure models are imported before create_all
+    from sqlalchemy import text
     async with engine.begin() as conn:
-        await conn.run_sync(Base.metadata.create_all)
+        await conn.execute(text("SELECT 1"))

@@ -195,8 +195,7 @@ class UpstoxScheduler:
         try:
             options = Options()
             options.add_argument("--no-sandbox")
-            # Running headed to bypass bot detection on Upstox
-            # options.add_argument("--headless=new")
+            options.add_argument("--headless=new")
             options.add_argument("--disable-gpu")
             options.add_argument("--window-size=1920,1080")
             options.add_argument("--disable-dev-shm-usage")
@@ -666,8 +665,6 @@ class UpstoxScheduler:
         
         try:
             combined_df = pd.concat(self.s3_buffer, ignore_index=True)
-            self.s3_buffer.clear()
-            self.s3_buffer_count = 0
             
             int_cols = ["Hour", "Minute", "Second"]
             for col in int_cols:
@@ -693,6 +690,10 @@ class UpstoxScheduler:
             # Measure sizes
             df_mem_mb = combined_df.memory_usage(deep=True).sum() / (1024**2)
             parquet_size_mb = len(parquet_buffer.getvalue()) / (1024**2)
+            
+            # Clear buffer ONLY upon successful upload
+            self.s3_buffer.clear()
+            self.s3_buffer_count = 0
             
             logger.info("=== S3 IMMUTABLE CHUNK UPLOAD ===")
             logger.info(f"Key: {file_name}")
@@ -861,7 +862,60 @@ class UpstoxScheduler:
         if self.scheduler:
             self.scheduler.shutdown(wait=False)
             logger.info("Scheduler stopped")
-        self.flush_s3_buffer()
+        
+        # Shutdown flush strategy
+        if self.s3_buffer:
+            logger.info("Attempting final S3 flush on shutdown...")
+            self.flush_s3_buffer()
+            
+            if self.s3_buffer:
+                logger.error("Final S3 upload failed! Preserving buffer locally.")
+                self._preserve_buffer_locally()
+
+    def _preserve_buffer_locally(self):
+        if not self.s3_buffer:
+            return
+            
+        import tempfile
+        import pyarrow as pa
+        import pyarrow.parquet as pq
+        import gc
+        import uuid
+        
+        try:
+            combined_df = pd.concat(self.s3_buffer, ignore_index=True)
+            
+            int_cols = ["Hour", "Minute", "Second"]
+            for col in int_cols:
+                if col in combined_df.columns:
+                    combined_df[col] = pd.to_numeric(combined_df[col], errors="coerce").fillna(0).astype("int64")
+
+            table = pa.Table.from_pandas(combined_df)
+            
+            unique_id = uuid.uuid4().hex[:6]
+            recovery_path = os.path.join(self.settings.CACHE_DIRECTORY, f"recovery_buffer_{unique_id}.parquet")
+            
+            dir_name = os.path.dirname(recovery_path)
+            fd, temp_path = tempfile.mkstemp(dir=dir_name, suffix=".tmp")
+            try:
+                with os.fdopen(fd, "wb") as f:
+                    pq.write_table(table, f)
+                os.replace(temp_path, recovery_path)
+                logger.warning(f"DURABLE S3 PERSISTENCE FAILED. Wrote {len(combined_df)} rows to {recovery_path}. Note: This file is only durable if the cache directory is on a persistent volume.")
+                
+                # We can now safely clear the memory buffer
+                self.s3_buffer.clear()
+                self.s3_buffer_count = 0
+                
+            except Exception:
+                os.remove(temp_path)
+                raise
+                
+            del combined_df, table
+            gc.collect()
+            
+        except Exception as e:
+            logger.error(f"Failed to preserve buffer locally: {e}")
 
     @property
     def is_running(self):

@@ -22,7 +22,7 @@ from typing import List, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 
-from app.auth.dependencies import get_current_user
+from app.auth.dependencies import require_auth
 from app.config.settings import get_settings
 from app.db.models import User
 from app.schemas.preset import PresetCreate, PresetResponse, PresetUpdate
@@ -31,37 +31,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["presets"])
 
 
-async def _get_repo(user: Optional[User] = Depends(get_current_user)):
-    """
-    Return the appropriate preset repository.
-
-    If DATABASE_URL is set and user is authenticated: use PostgresPresetRepository.
-    Otherwise: fall back to FilePresetRepository (anonymous, no user scoping).
-    """
-    settings = get_settings()
-
-    if settings.DATABASE_URL and user:
-        from app.db.database import get_session_factory
-        from app.services.preset_db_repository import PostgresPresetRepository
-        # We need a session — use a context manager here
-        factory = get_session_factory()
-        # Return a factory function that callers use with async context
-        return ("db", user.id)
-
-    # Fallback: file repository (no auth scoping)
-    from app.services.preset_repository import FilePresetRepository
-    return ("file", None)
-
-
-def _require_auth(user: Optional[User] = Depends(get_current_user)) -> Optional[User]:
-    """Soft auth: allow unauthenticated for public presets (file fallback), require for DB."""
-    return user
-
 
 @router.get("/presets", response_model=List[PresetResponse])
 async def list_presets(
     scanner_type: str = Query(None, description="Filter by scanner type"),
-    user: Optional[User] = Depends(get_current_user),
+    user: User = Depends(require_auth),
 ):
     """Get all presets accessible to the current user."""
     settings = get_settings()
@@ -77,7 +51,7 @@ async def list_presets(
     else:
         # File fallback
         from app.services.preset_repository import FilePresetRepository
-        repo = FilePresetRepository()
+        repo = FilePresetRepository(user_id=user.id if user else None)
         presets = repo.get_all(include_deleted=False)
         if scanner_type and scanner_type != "any":
             presets = [p for p in presets if p.scanner_type in (scanner_type, "any")]
@@ -88,7 +62,7 @@ async def list_presets(
 @router.post("/presets", response_model=PresetResponse)
 async def create_preset(
     preset: PresetCreate,
-    user: Optional[User] = Depends(get_current_user),
+    user: User = Depends(require_auth),
 ):
     """Create a new preset."""
     settings = get_settings()
@@ -150,7 +124,7 @@ async def create_preset(
         import uuid
         from datetime import datetime, timezone
         from app.services.preset_repository import FilePresetRepository
-        repo = FilePresetRepository()
+        repo = FilePresetRepository(user_id=user.id if user else None)
         duplicate = repo.find_duplicate(preset.name, preset.request)
         if duplicate:
             raise HTTPException(
@@ -186,7 +160,7 @@ async def create_preset(
 @router.get("/presets/{preset_id}", response_model=PresetResponse)
 async def get_preset(
     preset_id: str,
-    user: Optional[User] = Depends(get_current_user),
+    user: User = Depends(require_auth),
 ):
     """Get a specific preset."""
     settings = get_settings()
@@ -203,7 +177,7 @@ async def get_preset(
             return preset
     else:
         from app.services.preset_repository import FilePresetRepository
-        repo = FilePresetRepository()
+        repo = FilePresetRepository(user_id=user.id if user else None)
         preset = repo.get_by_id(preset_id)
         if not preset or preset.is_deleted:
             raise HTTPException(status_code=404, detail="Preset not found")
@@ -214,7 +188,7 @@ async def get_preset(
 async def update_preset(
     preset_id: str,
     updates: PresetUpdate,
-    user: Optional[User] = Depends(get_current_user),
+    user: User = Depends(require_auth),
 ):
     """Update a preset. Only the owner can update."""
     settings = get_settings()
@@ -236,7 +210,7 @@ async def update_preset(
     else:
         from datetime import datetime, timezone
         from app.services.preset_repository import FilePresetRepository
-        repo = FilePresetRepository()
+        repo = FilePresetRepository(user_id=user.id if user else None)
         preset = repo.get_by_id(preset_id)
         if not preset or preset.is_deleted:
             raise HTTPException(status_code=404, detail="Preset not found")
@@ -247,7 +221,7 @@ async def update_preset(
 @router.delete("/presets/{preset_id}")
 async def delete_preset(
     preset_id: str,
-    user: Optional[User] = Depends(get_current_user),
+    user: User = Depends(require_auth),
 ):
     """Soft-delete a preset. Only the owner can delete."""
     settings = get_settings()
@@ -269,7 +243,7 @@ async def delete_preset(
     else:
         from datetime import datetime, timezone
         from app.services.preset_repository import FilePresetRepository
-        repo = FilePresetRepository()
+        repo = FilePresetRepository(user_id=user.id if user else None)
         preset = repo.get_by_id(preset_id)
         if not preset or preset.is_deleted:
             raise HTTPException(status_code=404, detail="Preset not found")
@@ -283,7 +257,7 @@ async def delete_preset(
 @router.post("/presets/{preset_id}/use", response_model=PresetResponse)
 async def use_preset(
     preset_id: str,
-    user: Optional[User] = Depends(get_current_user),
+    user: User = Depends(require_auth),
 ):
     """Increment usage count for a preset."""
     settings = get_settings()
@@ -302,7 +276,7 @@ async def use_preset(
     else:
         from datetime import datetime, timezone
         from app.services.preset_repository import FilePresetRepository
-        repo = FilePresetRepository()
+        repo = FilePresetRepository(user_id=user.id if user else None)
         preset = repo.get_by_id(preset_id)
         if not preset or preset.is_deleted:
             raise HTTPException(status_code=404, detail="Preset not found")

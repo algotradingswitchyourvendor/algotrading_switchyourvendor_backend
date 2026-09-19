@@ -97,28 +97,38 @@ class EntitlementChecker:
         Check if user has exceeded their daily scanner limit.
 
         Returns (allowed: bool, current_count: int).
-        If allowed, increments the counter atomically.
+        If allowed, increments the counter atomically using a Lua script.
         """
         limit = self.get_scanner_daily_limit()
         if limit == -1:
             return True, 0
 
-        today = date.today().isoformat()
+        from datetime import datetime
+        from zoneinfo import ZoneInfo
+        IST = ZoneInfo("Asia/Kolkata")
+        today = datetime.now(IST).strftime("%Y-%m-%d")
         key = REDIS_SCANNER_USAGE_KEY.format(user_id=user_id, date=today)
 
-        current = await redis_client.get(key)
-        current_count = int(current) if current else 0
-
-        if current_count >= limit:
+        # Atomic check and increment via Lua script
+        lua_script = """
+        local current = redis.call("GET", KEYS[1])
+        if current and tonumber(current) >= tonumber(ARGV[1]) then
+            return -1
+        end
+        local new_count = redis.call("INCR", KEYS[1])
+        if new_count == 1 then
+            redis.call("EXPIRE", KEYS[1], tonumber(ARGV[2]))
+        end
+        return new_count
+        """
+        
+        result = await redis_client.eval(lua_script, 1, key, limit, 86400 + 3600)
+        
+        if result == -1:
+            current_count = int(await redis_client.get(key) or limit)
             return False, current_count
-
-        # Increment and set TTL (expires at midnight + buffer)
-        pipe = redis_client.pipeline()
-        pipe.incr(key)
-        pipe.expire(key, 86400 + 3600)  # 25 hours
-        await pipe.execute()
-
-        return True, current_count + 1
+            
+        return True, int(result)
 
     # ── Scanner LTD ───────────────────────────────────────────────────────
 

@@ -93,8 +93,12 @@ async def exchange_code(code: str) -> UserInfo:
         profile = profile_response.json()
 
     email = profile.get("email")
+    email_verified = profile.get("email_verified")
+    
     if not email:
         raise ValueError("Google profile did not return an email address")
+    if not email_verified:
+        raise ValueError("Google email is not verified")
 
     sub = profile.get("sub")  # Google's unique user identifier
     if not sub:

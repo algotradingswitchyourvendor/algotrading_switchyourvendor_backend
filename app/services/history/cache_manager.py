@@ -256,13 +256,14 @@ class CacheManager:
                 
                 is_valid = False
                 if os.path.exists(local_path):
-                    try:
-                        if os.path.getsize(local_path) == obj["content_length"]:
-                            is_valid = True
-                        else:
+                    if self.validation.verify_cache_integrity(local_path):
+                        is_valid = True
+                    else:
+                        try:
                             os.remove(local_path)
-                    except OSError:
-                        pass
+                            logger.info(f"Removed corrupt or invalid cache chunk: {local_path}")
+                        except OSError as e:
+                            logger.warning(f"Failed to remove invalid cache chunk {local_path}: {e}")
                 
                 if not is_valid:
                     logger.info(f"Downloading missing chunk: {rel_path}")
