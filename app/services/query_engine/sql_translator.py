@@ -46,6 +46,9 @@ def _evaluate_single(column: str, operator: str, value: Any) -> str:
     """
     op = operator.lower().strip()
     
+    if column == "Close":
+        column = "Last Price"
+        
     # Safe quoting for column names
     col = f'"{column}"'
     
@@ -149,6 +152,8 @@ def translate_ast_to_sql(ast: dict) -> str:
         
     elif node_type == "Identifier":
         name = ast["name"]
+        if name == "Close":
+            name = "Last Price"
         return f'"{name}"'
         
     elif node_type == "Literal":

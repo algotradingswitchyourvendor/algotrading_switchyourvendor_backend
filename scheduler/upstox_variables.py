@@ -185,60 +185,69 @@ class UpstoxScheduler:
         Authenticate with Upstox via Selenium headless browser.
         Returns the access token or None on failure.
         """
+        if self.settings.UPSTOX_ACCESS_TOKEN:
+            logger.info("Using configured Upstox access token")
+            return self.settings.UPSTOX_ACCESS_TOKEN
+
+        logger.info("No configured access token; starting automatic Upstox login")
+        driver = None
+        step = "Initializing ChromeDriver"
         try:
             options = Options()
             options.add_argument("--no-sandbox")
-            options.add_argument("--headless=new")
+            # Running headed to bypass bot detection on Upstox
+            # options.add_argument("--headless=new")
             options.add_argument("--disable-gpu")
             options.add_argument("--window-size=1920,1080")
             options.add_argument("--disable-dev-shm-usage")
             options.add_argument("--disable-blink-features=AutomationControlled")
+            options.add_argument("--disable-extensions")
 
             driver = webdriver.Chrome(options=options)
 
+            step = "Loading login URL"
             url = (
                 f"https://api-v2.upstox.com/login/authorization/dialog"
                 f"?response_type=code"
                 f"&client_id={self.settings.UPSTOX_API_KEY}"
                 f"&redirect_uri={urllib.parse.quote(self.settings.UPSTOX_REDIRECT_URI, safe='')}"
             )
-
             driver.get(url)
+
+            # Check for API configuration error before waiting for UI elements
+            if "UDAPI100068" in driver.page_source or "Check your 'client_id' and 'redirect_uri'" in driver.page_source:
+                raise ValueError("Upstox API configuration error: Check your 'UPSTOX_API_KEY' and 'UPSTOX_REDIRECT_URI'. They are incorrect or mismatching.")
 
             wait = WebDriverWait(driver, 30)
 
-            # Wait for React to render the mobile number input
+            step = "Entering mobile number"
             username_input = wait.until(EC.visibility_of_element_located((By.ID, "mobileNum")))
             username_input.clear()
             username_input.send_keys(self.settings.UPSTOX_CLIENT_ID)
-
             wait.until(EC.element_to_be_clickable((By.ID, "getOtp"))).click()
 
-            # Wait for OTP input to become visible
+            step = "Entering TOTP"
             password_input = wait.until(EC.visibility_of_element_located((By.ID, "otpNum")))
-            
-            # Enter TOTP
             totp = pyotp.TOTP(self.settings.UPSTOX_TOTP_SECRET).now()
             password_input.clear()
             password_input.send_keys(totp)
-
             wait.until(EC.element_to_be_clickable((By.ID, "continueBtn"))).click()
 
-            # Wait for PIN input to become visible
+            step = "Entering PIN"
             pin_input = wait.until(EC.visibility_of_element_located((By.ID, "pinCode")))
             pin_input.clear()
             pin_input.send_keys(self.settings.UPSTOX_CLIENT_PIN)
 
+            step = "Waiting for redirect after PIN"
             original_url = driver.current_url
             wait.until(EC.element_to_be_clickable((By.ID, "pinContinueBtn"))).click()
-
-            # Wait until the URL changes from the login page
             wait.until(EC.url_changes(original_url))
 
+            step = "Extracting auth code"
             redirected_url = driver.current_url
             code = redirected_url.split("?code=")[1]
 
-            # Exchange code for token
+            step = "Exchanging code for token"
             token_url = "https://api.upstox.com/v2/login/authorization/token"
             headers = {
                 "accept": "application/json",
@@ -257,13 +266,26 @@ class UpstoxScheduler:
             json_response = response.json()
             access_token = json_response["access_token"]
 
-            driver.quit()
             logger.info("Login successful")
             return str(access_token)
 
         except Exception as e:
-            logger.error(f"Login failed: {e}")
+            logger.error(f"Upstox login failed at step: {step}")
+            logger.error(f"Reason: {str(e)}")
+            if driver:
+                try:
+                    debug_path = os.path.join(self.settings.CACHE_DIRECTORY, "login_error_variables.png")
+                    driver.save_screenshot(debug_path)
+                    logger.info(f"Saved error screenshot to {debug_path}")
+                except Exception as ss_err:
+                    logger.error(f"Failed to save screenshot: {ss_err}")
             return None
+        finally:
+            if driver:
+                try:
+                    driver.quit()
+                except Exception:
+                    pass
 
     # ── Data Fetching ───────────────────────────────────────────────────
 
@@ -706,9 +728,9 @@ class UpstoxScheduler:
             return
         self.capture_premarket_traded_value()
 
-    def _fetch_and_publish(self):
+    def _fetch_and_publish(self, force: bool = False):
         from app.config.holidays import is_market_open
-        if not is_market_open():
+        if not is_market_open() and not force:
             return
             
         if not self.access_token:
@@ -789,6 +811,9 @@ class UpstoxScheduler:
 
     def start(self):
         self.access_token = self.auto_login()
+        if not self.access_token:
+            logger.warning("Upstox automatic login failed or no token provided. Data fetches will be skipped until successful refresh.")
+        
         self.scheduler = BackgroundScheduler()
 
         # Core market hours tick
@@ -820,6 +845,16 @@ class UpstoxScheduler:
 
         self.scheduler.start()
         logger.info("Upstox Variables Scheduler started")
+
+        # Run an initial fetch to populate the cache on startup
+        import threading
+        def _initial_fetch():
+            logger.info("Running initial fetch to populate cache on startup...")
+            try:
+                self._fetch_and_publish(force=True)
+            except Exception as e:
+                logger.error(f"Initial fetch failed: {e}")
+        threading.Thread(target=_initial_fetch, daemon=True).start()
 
     def stop(self) -> None:
         """Stop the background scheduler gracefully."""

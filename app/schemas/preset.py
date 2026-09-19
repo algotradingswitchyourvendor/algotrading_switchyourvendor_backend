@@ -7,7 +7,7 @@ class PresetCreate(BaseModel):
     name: str = Field(..., min_length=1, max_length=100)
     description: Optional[str] = None
     scanner_type: str = Field(default="any") 
-    version: int = 2
+    version: str = "2"
     request: UnifiedQueryRequest
     is_public: bool = False
     
@@ -21,7 +21,7 @@ class PresetUpdate(BaseModel):
     name: Optional[str] = None
     description: Optional[str] = None
     request: Optional[UnifiedQueryRequest] = None
-    version: Optional[int] = None
+    version: Optional[str] = None
     favorite: Optional[bool] = None
     sorting: Optional[List[dict]] = None
     page_size: Optional[int] = None

@@ -1,0 +1,9 @@
+feat: Add SaaS modules, database migrations, and authentication
+
+- Added database migrations using Alembic (alembic/, alembic.ini)
+- Added authentication, user management, and support APIs (app/api/auth.py, app/api/users.py, app/api/support.py)
+- Added payment and subscription APIs with Razorpay integration (app/api/payments.py, app/api/subscriptions.py, app/services/razorpay_service.py)
+- Integrated Entitlements module (app/entitlements/)
+- Added database models and core redis client setup (app/db/, app/redis_client.py)
+- Modified existing APIs (health, history, presets, scanner) to integrate with new DB/Auth architecture
+- Updated requirements.txt and app/main.py with new dependencies and configurations

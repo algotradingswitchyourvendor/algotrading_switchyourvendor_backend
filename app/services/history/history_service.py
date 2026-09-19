@@ -126,7 +126,7 @@ class HistoryService:
             def _execute_duckdb():
                 with DuckDBSession() as cursor:
                     safe_path = str(parquet_path).replace('\\', '/')
-                    table_ref = f"read_parquet('{safe_path}')"
+                    table_ref = f"read_parquet('{safe_path}', hive_partitioning=false)"
                     
                     # Inspect schema without full scan
                     desc = cursor.execute(f"DESCRIBE SELECT * FROM {table_ref}").fetchall()
@@ -183,7 +183,7 @@ class HistoryService:
                     # Read to arrow / dict
                     t_ser = time.perf_counter()
                     # To dict via Arrow avoids Pandas 3.0 tz issues and saves memory
-                    arrow_table = rel.arrow().read_all()
+                    arrow_table = rel.arrow()
                     records = arrow_table.to_pylist()
                     
                     if rm:
@@ -256,6 +256,8 @@ class HistoryService:
             order_by = ""
             if request.sort_by:
                 col = request.sort_by.replace("'", "''")
+                if col == "Close":
+                    col = "Last Price"
                 order = "ASC" if request.sort_order == "asc" else "DESC"
                 order_by = f'ORDER BY "{col}" {order} NULLS LAST'
                 
@@ -263,11 +265,16 @@ class HistoryService:
             offset = (request.page - 1) * page_size
             
             safe_path = str(parquet_path).replace('\\', '/')
-            table_ref = f"read_parquet('{safe_path}')"
+            table_ref = f"read_parquet('{safe_path}', hive_partitioning=false)"
             
             def _execute_duckdb():
                 timings = {}
                 with DuckDBSession() as cursor:
+                    desc = cursor.execute(f"DESCRIBE SELECT * FROM {table_ref}").fetchall()
+                    cols = [c[0] for c in desc]
+                    available_proj = [c for c in PROJECTION_COLUMNS if c in cols]
+                    select_cols = ", ".join(f'"{c}"' for c in available_proj) if available_proj else "*"
+                    
                     t_scan = time.perf_counter()
                     total_scanned = cursor.execute(f"SELECT COUNT(*) FROM {table_ref}").fetchone()[0]
                     timings["Total Scanned Query"] = (time.perf_counter() - t_scan) * 1000
@@ -300,13 +307,12 @@ class HistoryService:
                     t_exec = time.perf_counter()
                     where_clause = "" if sql_where == "1=1" else f"WHERE {sql_where}"
                     
-                    select_cols = PROJECTION_SQL
                     data_query = f"SELECT {select_cols} FROM {table_ref} {where_clause} {order_by} LIMIT ? OFFSET ?"
                     rel = cursor.execute(data_query, [page_size, offset])
                     timings["DuckDB Query"] = (time.perf_counter() - t_exec) * 1000
                     
                     t_mat = time.perf_counter()
-                    df = rel.arrow().read_all().to_pandas(types_mapper=pd.ArrowDtype)
+                    df = rel.arrow().to_pandas(types_mapper=pd.ArrowDtype)
                     timings["Materialization"] = (time.perf_counter() - t_mat) * 1000
                     
                     return total_scanned, total_matched, bullish_count, bearish_count, df, timings
@@ -340,7 +346,7 @@ class HistoryService:
             def _execute_timeline():
                 with DuckDBSession() as cursor:
                     safe_path = str(parquet_path).replace('\\', '/')
-                    table_ref = f"read_parquet('{safe_path}')"
+                    table_ref = f"read_parquet('{safe_path}', hive_partitioning=false)"
                     
                     desc = cursor.execute(f"DESCRIBE SELECT * FROM {table_ref}").fetchall()
                     cols = [c[0] for c in desc]
@@ -359,7 +365,7 @@ class HistoryService:
                         WHERE "{symbol_col}" ILIKE ?
                         ORDER BY "{timestamp_col}" ASC
                     """
-                    df = cursor.execute(data_query, [f"%{symbol.strip()}%"]).arrow().read_all().to_pandas(types_mapper=pd.ArrowDtype)
+                    df = cursor.execute(data_query, [f"%{symbol.strip()}%"]).arrow().to_pandas(types_mapper=pd.ArrowDtype)
                     return df, timestamp_col
 
             async with _heavy_query_semaphore:
@@ -398,8 +404,8 @@ class HistoryService:
             def _execute_schema():
                 with DuckDBSession() as cursor:
                     safe_path = str(parquet_path).replace('\\', '/')
-                    table_ref = f"read_parquet('{safe_path}')"
-                    return cursor.execute(f"SELECT * FROM {table_ref} LIMIT 1").arrow().read_all().to_pandas(types_mapper=pd.ArrowDtype)
+                    table_ref = f"read_parquet('{safe_path}', hive_partitioning=false)"
+                    return cursor.execute(f"SELECT * FROM {table_ref} LIMIT 1").arrow().to_pandas(types_mapper=pd.ArrowDtype)
             return await asyncio.to_thread(_execute_schema)
         except Exception as e:
             logger.error(f"Failed to load schema for {target_date}: {e}")

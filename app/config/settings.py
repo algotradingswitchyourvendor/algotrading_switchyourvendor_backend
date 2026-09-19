@@ -6,7 +6,7 @@ All credentials and deployment-specific values are externalized here.
 """
 
 from pydantic_settings import BaseSettings
-from typing import List
+from typing import List, Optional
 from functools import lru_cache
 
 
@@ -18,13 +18,59 @@ class Settings(BaseSettings):
     The .env file is loaded automatically from the backend/ directory.
     """
 
-    # ── Upstox API Credentials ──────────────────────────────────────────
+    # ── Upstox Market Data API Credentials (scheduler / trading) ────────
     UPSTOX_API_KEY: str = ""
     UPSTOX_SECRET_KEY: str = ""
     UPSTOX_CLIENT_ID: str = ""
     UPSTOX_CLIENT_PIN: str = ""
     UPSTOX_TOTP_SECRET: str = ""
     UPSTOX_REDIRECT_URI: str = "https://127.0.0.1:5000/"
+    UPSTOX_ACCESS_TOKEN: Optional[str] = None
+
+    # ── Upstox OAuth (for user login — may use same or separate app) ────
+    # These are for the SaaS user authentication flow, not the scheduler.
+    UPSTOX_AUTH_CLIENT_ID: str = ""
+    UPSTOX_AUTH_CLIENT_SECRET: str = ""
+    UPSTOX_AUTH_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/upstox/callback"
+
+    # ── Google OAuth ─────────────────────────────────────────────────────
+    GOOGLE_CLIENT_ID: str = ""
+    GOOGLE_CLIENT_SECRET: str = ""
+    GOOGLE_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/google/callback"
+
+    # ── Zerodha Kite Connect OAuth ────────────────────────────────────────
+    # NOTE: Zerodha multi-user OAuth requires compliance approval from Zerodha.
+    # Standard Kite Connect is single-user only. Contact kiteconnect@zerodha.com
+    # to enable multi-user support for your platform.
+    # Set ZERODHA_MULTI_USER_ENABLED=true only after receiving explicit approval.
+    ZERODHA_API_KEY: str = ""
+    ZERODHA_API_SECRET: str = ""
+    ZERODHA_REDIRECT_URI: str = "http://localhost:8000/api/v1/auth/zerodha/callback"
+    ZERODHA_MULTI_USER_ENABLED: bool = False
+
+    # ── Database (Neon PostgreSQL via asyncpg) ───────────────────────────
+    DATABASE_URL: str = ""  # postgresql+asyncpg://user:pass@host/dbname
+
+    # ── Redis ─────────────────────────────────────────────────────────────
+    REDIS_URL: str = "redis://localhost:6379/0"
+
+    # ── Session Security (opaque server-side sessions — no JWT) ──────────
+    SESSION_SECRET: str = ""  # 64-char random hex — signs session cookie
+    ENCRYPTION_KEY: str = ""  # Fernet key (base64url 32 bytes) — encrypts tokens at rest
+
+    # ── Razorpay (recurring subscription billing) ─────────────────────────
+    RAZORPAY_KEY_ID: str = ""
+    RAZORPAY_KEY_SECRET: str = ""
+    RAZORPAY_WEBHOOK_SECRET: str = ""
+
+    # ── Admin Bootstrap ────────────────────────────────────────────────────
+    # Used ONLY at first startup to promote a newly registered user to ADMIN.
+    # After bootstrap, authorization is solely based on the database role.
+    # Set to empty string to disable bootstrap.
+    ADMIN_BOOTSTRAP_EMAIL: str = ""
+
+    # ── Frontend ──────────────────────────────────────────────────────────
+    FRONTEND_URL: str = "http://localhost:3000"
 
     # ── AWS S3 Configuration ────────────────────────────────────────────
     S3_BUCKET_NAME: str = "rahul-upstox01"
