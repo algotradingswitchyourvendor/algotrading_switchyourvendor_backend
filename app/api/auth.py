@@ -54,6 +54,7 @@ def _set_session_cookie(response: Response, token: str, settings=None) -> None:
 
     is_production = not settings.FRONTEND_URL.startswith("http://localhost")
 
+    _delete_state_cookie(response, "/api/v1/auth")
     response.set_cookie(
         key=COOKIE_NAME,
         value=token,
@@ -65,21 +66,35 @@ def _set_session_cookie(response: Response, token: str, settings=None) -> None:
     )
 
 
+def _delete_state_cookie(response: Response, path: str) -> None:
+    """Append a state-cookie deletion without replacing another Set-Cookie header."""
+    deletion = Response()
+    deletion.delete_cookie(OAUTH_STATE_COOKIE, path=path)
+    response.headers.append("set-cookie", deletion.headers["set-cookie"])
+
+
 def _clear_session_cookie(response: Response) -> None:
     """Clear the session cookie."""
     response.delete_cookie(key=COOKIE_NAME, path="/")
 
 
-def _set_state_cookie(response: Response, state: str) -> None:
+def _set_state_cookie(response: Response, state: str, settings=None) -> None:
     """Set the OAuth state cookie (short-lived, for CSRF protection)."""
+    if settings is None:
+        settings = get_settings()
+
+    is_production = not settings.FRONTEND_URL.startswith("http://localhost")
+
     response.set_cookie(
         key=OAUTH_STATE_COOKIE,
         value=state,
         max_age=OAUTH_STATE_TTL,
         httponly=True,
+        secure=is_production,
         samesite="lax",
-        path="/api/v1/auth",
+        path="/",
     )
+    _delete_state_cookie(response, "/api/v1/auth")
 
 
 def _validate_state(received_state: str, cookie_state: Optional[str]) -> bool:
@@ -136,7 +151,7 @@ async def google_login(response: Response):
     state = generate_state_token()
     auth_url = google_provider.get_authorization_url(state)
     redirect = RedirectResponse(url=auth_url, status_code=302)
-    _set_state_cookie(redirect, state)
+    _set_state_cookie(redirect, state, settings)
     return redirect
 
 
@@ -154,14 +169,20 @@ async def google_callback(
 
     if error:
         logger.warning(f"Google OAuth error: {error}")
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=oauth_denied")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=oauth_denied", status_code=302)
 
     if not _validate_state(state, mp_oauth_state):
-        logger.warning("Google OAuth state mismatch — possible CSRF")
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=invalid_state")
+        logger.warning(
+            "Google OAuth state mismatch — possible CSRF "
+            "(received=%s, cookie_present=%s, host=%s)",
+            bool(state),
+            bool(mp_oauth_state),
+            request.headers.get("host"),
+        )
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=invalid_state", status_code=302)
 
     if not code:
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=no_code")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=no_code", status_code=302)
 
     try:
         user_info = await google_provider.exchange_code(code)
@@ -177,13 +198,14 @@ async def google_callback(
             status_code=302,
         )
         _set_session_cookie(redirect, raw_token, settings)
-        redirect.delete_cookie(OAUTH_STATE_COOKIE, path="/api/v1/auth")
+        _delete_state_cookie(redirect, "/")
+        _delete_state_cookie(redirect, "/api/v1/auth")
         return redirect
 
     except Exception as e:
         await db.rollback()
         logger.error(f"Google OAuth callback error: {e}", exc_info=True)
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=auth_failed")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=auth_failed", status_code=302)
 
 
 # ── Upstox OAuth ──────────────────────────────────────────────────────────────
@@ -220,14 +242,20 @@ async def upstox_callback(
 
     if error:
         logger.warning(f"Upstox OAuth error: {error}")
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=oauth_denied")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=oauth_denied", status_code=302)
 
     if not _validate_state(state, mp_oauth_state):
-        logger.warning("Upstox OAuth state mismatch — possible CSRF")
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=invalid_state")
+        logger.warning(
+            "Upstox OAuth state mismatch — possible CSRF "
+            "(received=%s, cookie_present=%s, host=%s)",
+            bool(state),
+            bool(mp_oauth_state),
+            request.headers.get("host"),
+        )
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=invalid_state", status_code=302)
 
     if not code:
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=no_code")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=no_code", status_code=302)
 
     try:
         user_info = await upstox_provider.exchange_code(code)
@@ -249,7 +277,7 @@ async def upstox_callback(
     except Exception as e:
         await db.rollback()
         logger.error(f"Upstox OAuth callback error: {e}", exc_info=True)
-        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=auth_failed")
+        return RedirectResponse(url=f"{settings.FRONTEND_URL}/auth/sign-in?error=auth_failed", status_code=302)
 
 
 # ── Zerodha OAuth ──────────────────────────────────────────────────────────────
@@ -285,7 +313,7 @@ async def zerodha_login():
         raise HTTPException(503, detail=str(e))
 
     redirect = RedirectResponse(url=auth_url, status_code=302)
-    _set_state_cookie(redirect, state)
+    _set_state_cookie(redirect, state, settings)
     return redirect
 
 
@@ -327,7 +355,8 @@ async def zerodha_callback(
             status_code=302,
         )
         _set_session_cookie(redirect, raw_token, settings)
-        redirect.delete_cookie(OAUTH_STATE_COOKIE, path="/api/v1/auth")
+        _delete_state_cookie(redirect, "/")
+        _delete_state_cookie(redirect, "/api/v1/auth")
         return redirect
 
     except Exception as e:
